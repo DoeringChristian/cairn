@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
 from cairn.server.routes.artifacts import HTML_DOC_SANDBOX, RESIZE_SHIM, inject_resize_shim
-from cairn.server.run_sets import run_sets_yaml
+from cairn.backend.run_sets import run_sets_yaml
 
 PAGE = (
     b"<html><body><h1>hi \xc3\xa9</h1>"
@@ -30,7 +30,7 @@ def _upload(client: TestClient, data: bytes, mime: str = "text/html") -> str:
 
 @pytest.fixture
 def client(tmp_path):
-    with TestClient(create_app(data_dir=tmp_path / "cairn")) as c:
+    with TestClient(create_app(data_dir=tmp_path / "cairn", auth_enabled=False)) as c:
         yield c
 
 
@@ -96,31 +96,3 @@ def test_revalidation_is_a_304(client):
     r = client.get(f"/api/artifacts/{h}/html", headers={"If-None-Match": etag})
     assert r.status_code == 304
     assert r.headers["content-security-policy"] == HTML_DOC_SANDBOX
-
-
-def test_share_link_admits_only_in_scope_html(tmp_path):
-    app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True)
-    with TestClient(app) as owner:
-        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
-        owner.headers.update({"Authorization": f"Bearer {token}"})
-        a = owner.post("/api/runs", json={"project": "p", "name": "a"}).json()
-        pid, a = a["project_id"], a["run_id"]
-        b = owner.post("/api/runs", json={"project": "p", "name": "b"}).json()["run_id"]
-        mine, theirs = _upload(owner, PAGE), _upload(owner, PAGE + b"<!-- b -->")
-        for run, h in ((a, mine), (b, theirs)):
-            r = owner.post(f"/api/runs/{run}/batch", json={"points": [{
-                "name": "page", "step": 1, "wall_time": "2026-01-01T00:00:00Z",
-                "object_type": "html", "artifact_hash": h,
-            }]})
-            assert r.status_code == 200, r.text
-        source = f"```cairn\n{run_sets_yaml([a])}\ncards:\n  - {{metric: page, type: html}}\n```"
-        rid = owner.post(f"/api/projects/{pid}/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
-        secret = owner.post(f"/api/projects/{pid}/reports/{rid}/shares", json={}).json()["secret"]
-
-        viewer = TestClient(app)
-        assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
-        r = viewer.get(f"/api/artifacts/{mine}/html")
-        assert r.status_code == 200 and RESIZE_SHIM in r.text
-        assert viewer.get(f"/api/artifacts/{theirs}/html").status_code == 403
-        # No login, no share: refused.
-        assert TestClient(app).get(f"/api/artifacts/{mine}/html").status_code == 401

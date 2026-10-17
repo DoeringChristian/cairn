@@ -125,7 +125,8 @@ def test_worker_log_cannot_finish_the_run(client):
     _post(client, [_create(1)])
     join = {"seq": 1, "op": "join", "t": 0.0, "payload": {"run_id": RID, "label": "w1"}}
     fin = {"seq": 2, "op": "finish", "t": 0.0, "payload": {"run_id": RID, "status": "failed"}}
-    assert _post(client, [join, fin], log="w1").status_code == 200
+    assert _post(client, [join, fin], log="w1").status_code == 422
+    assert client.get(_url(log="w1")).json() == {"applied_seq": 0}
     (status,) = client.app.state.db.read_one("SELECT status FROM runs WHERE id = ?", [RID])
     assert status == "running"
 

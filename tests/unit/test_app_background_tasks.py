@@ -8,10 +8,10 @@ import time
 
 from fastapi.testclient import TestClient
 
-from cairn.server import ingest_ops
+from cairn.backend import ingest_ops
 from cairn.server.app import create_app
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 
 def _silent_uploaded_run(repo):
@@ -43,7 +43,7 @@ def _wait_for(pred, timeout: float) -> bool:
 def test_background_tasks_mark_silent_runs_crashed(tmp_path):
     repo = tmp_path / ".cairn"
     _silent_uploaded_run(repo)
-    app = create_app(data_dir=repo)
+    app = create_app(data_dir=repo, auth_enabled=False)
     with TestClient(app):
         assert _wait_for(lambda: _status(app) == "crashed", timeout=5)
 
@@ -51,13 +51,13 @@ def test_background_tasks_mark_silent_runs_crashed(tmp_path):
 def test_no_background_tasks_leaves_runs_alone(tmp_path):
     repo = tmp_path / ".cairn"
     _silent_uploaded_run(repo)
-    app = create_app(data_dir=repo, background_tasks=False)
+    app = create_app(data_dir=repo, background_tasks=False, auth_enabled=False)
     with TestClient(app):
         assert not _wait_for(lambda: _status(app) == "crashed", timeout=0.5)
 
 
 def test_idle_daemon_requests_shutdown(tmp_path):
-    app = create_app(data_dir=tmp_path / ".cairn")
+    app = create_app(data_dir=tmp_path / ".cairn", auth_enabled=False)
     stopped = []
     app.state.idle_timeout = 0.2
     app.state.request_shutdown = lambda: stopped.append(True)
@@ -67,7 +67,7 @@ def test_idle_daemon_requests_shutdown(tmp_path):
 
 
 def test_requests_keep_a_daemon_alive(tmp_path):
-    app = create_app(data_dir=tmp_path / ".cairn")
+    app = create_app(data_dir=tmp_path / ".cairn", auth_enabled=False)
     stopped = []
     app.state.idle_timeout = 0.6
     app.state.request_shutdown = lambda: stopped.append(True)

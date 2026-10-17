@@ -4,18 +4,21 @@ cairn moves data in three ways:
 
 | You want to… | Use |
 |---|---|
-| Move runs, with everything they logged, to another cairn repo | A [run archive](#run-archives) (ZIP): `cairn export-runs` / `cairn import-runs` |
-| Analyse metrics in pandas, a spreadsheet, or another tool | [`cairn export`](#exporting-metrics) or `history()` |
-| Bring in TensorBoard logs | [`cairn import-tb`](integrations.md#importing-tensorboard-logs) |
+| Move runs, with everything they logged, to another cairn repo | A [run archive](#run-archives) (ZIP), through the UI or HTTP API |
+| Analyse metrics in pandas, a spreadsheet, or another tool | [`history()` and pandas](#exporting-metrics) |
+| Bring in TensorBoard logs | [`import_tensorboard()`](integrations.md#importing-tensorboard-logs) |
 
 cairn has no importer for other experiment trackers.
 
 ## Run archives
 
-A run archive is a ZIP file that holds complete runs: metadata, config,
+A run archive is a ZIP file that holds selected run data: metadata, config,
 summary, every sequence, the artifacts they reference, logs, source snapshots,
 metric rules and alerts. It also carries the runs' sweeps and the
-[artifact registry](artifacts.md) entries they produced or used.
+[artifact registry](artifacts.md) entries they produced or used. Archives are
+for sharing selected runs, not a complete repository backup: report workspaces,
+publication history and retained revisions are not included. See
+[Backup and recovery](storage-architecture.md#backup-and-recovery).
 
 ### In the web UI
 
@@ -24,21 +27,6 @@ metric rules and alerts. It also carries the runs' sweeps and the
 - **Import:** click **Import** on the projects page or in a runs table, and
   pick a `.zip`. The dialog lists the imported runs.
 
-### From the command line
-
-```bash
-cairn export-runs 40b0f87d6972... a2d74315818b... -o runs.zip
-cairn import-runs runs.zip                        # into the configured repo or server
-cairn import-runs runs.zip --repo ~/other/.cairn --project baselines
-```
-
-Both work on a local repo (through its server, started when needed) and on a server (`--server URL`;
-see [Client commands](server.md#client-commands)). `export-runs` writes the
-archive the UI's **Export** downloads. `import-runs` prints each run's new id,
-original id and name (`--format json` for a list). `--project P` puts the
-archive's runs, their sweeps and their artifact registry entries into project
-`P` instead of their own.
-
 ### Over the HTTP API
 
 ```bash
@@ -46,7 +34,7 @@ archive's runs, their sweeps and their artifact registry entries into project
 curl -X POST http://localhost:4300/api/export \
      -H "Authorization: Bearer $CAIRN_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"run_ids": ["40b0f87d6972...", "a2d74315818b..."]}' \
+     -d '{"run_ids": ["FULL_RUN_ID_1", "FULL_RUN_ID_2"]}' \
      -o runs.zip
 
 # import: upload the ZIP as multipart field "file"
@@ -55,9 +43,11 @@ curl -X POST http://localhost:4300/api/import \
      -F file=@runs.zip
 ```
 
-Both endpoints need the `write` role when authentication is on (see
-[tokens and roles](server.md#tokens-and-roles)). `POST /api/import?project=P`
-imports into project `P`, as `--project` does.
+Both endpoints use the server's single token when authentication is enabled
+(see [Server and authentication](server.md)). Supply full run IDs in the export
+request. `POST /api/import?project=P` imports into project `P`. To use these
+endpoints with a local repo, explicitly start `cairn ui --repo PATH` and use its
+loopback URL.
 
 ### What an import does
 
@@ -97,56 +87,16 @@ artifact_registry.json         registry families, versions, entries, aliases and
 artifacts/<hash><ext>          artifact bytes
 artifacts/<hash>.meta.json     artifact metadata
 <run_id>/run.json              {run}: the runs row, with its config and summary documents
-<run_id>/sequences.json        every logged point
+<run_id>/sequences.json        logged metric and media projections
+<run_id>/records.json          structured log records
 <run_id>/metric_defs.json      summary= / x= metric rules
 <run_id>/alerts.json           alerts
-<run_id>/logs/...              captured stdout/stderr
+<run_id>/logs.json             captured console rows
+<run_id>/logs/...              additional captured log files
 <run_id>/source/...            the source snapshot
 ```
 
 ## Exporting metrics
-
-### `cairn export`
-
-`cairn export` writes one run, or a whole project, to a local file. It reads a
-local repo or a server, found like every client command (`--repo`,
-`--server`, `CAIRN_REPO`/`CAIRN_SERVER`, the config file, `./.cairn`; see
-[Client commands](server.md#client-commands)).
-
-**One run:**
-
-```bash
-cairn export 40b0f87d6972... -o run.json                  # the run and every point
-cairn export 40b0f87d6972... --format csv -o run.csv      # scalar points only
-cairn export 40b0f87d6972... --format parquet -o run.parquet
-```
-
-| Format | Contents |
-|---|---|
-| `json` (default) | `{"run": …, "sequences": {name: [points]}}`: the run's metadata and the raw points of every sequence, media included (as artifact references) |
-| `csv`, `parquet` | One row per scalar point: `run_id, name, step, wall_time, value` |
-
-**A whole project:**
-
-```bash
-cairn export --project mnist --format csv -o mnist.csv
-cairn export --project mnist --filter status=completed --filter lr__gt=0.001 \
-             --format parquet -o mnist.parquet
-```
-
-This writes one table of every scalar point of every matching run:
-`run_id, run_name, name, step, wall_time, value`. `--filter KEY=VALUE` takes
-the keywords of `RunQuery.filter()` (see
-[Filtering with `filter()`](reading.md#filtering-with-filter)), and `VALUE` is
-parsed as JSON when it can be (`lr__gt=0.001` compares numbers,
-`optimizer__in=["adam","sgd"]` a list). Repeat `--filter` to combine filters.
-With `json`, the table is written as a list of records.
-
-!!! note "Extras"
-    `parquet` needs pandas and pyarrow, and `--project` needs pandas for any
-    format. Both come with `pip install 'cairn-track[export]'`.
-
-### From Python
 
 `history()` returns scalar metrics as pandas DataFrames, from a local repo, a
 server or an archive. It needs the `[export]` extra.
@@ -177,8 +127,15 @@ pd.DataFrame(rows)
 ## Importing TensorBoard logs
 
 ```bash
-pip install 'cairn-track[tb]'
-cairn import-tb runs/ --project my-experiments
+pip install 'cairn-track[tb] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'
+```
+
+```python
+from cairn.sdk.import_tb import import_tensorboard
+
+run_ids = import_tensorboard(
+    "runs/", project="my-experiments", repo="./.cairn",
+)
 ```
 
 Each directory with event files becomes a run, with its scalars, images and

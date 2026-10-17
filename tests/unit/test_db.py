@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from cairn.server.storage.db import Database
+from cairn.backend.storage.db import Database
 
 
 @pytest.fixture
@@ -96,3 +96,26 @@ def test_close_is_idempotent(tmp_path):
     d = Database.open(tmp_path / "c.db")
     d.close()
     d.close()  # should not raise
+
+
+def test_nested_rollback_discards_only_its_after_commit_hooks(db):
+    hooks = []
+    with db.transaction():
+        db.after_commit(lambda: hooks.append("outer"))
+        with pytest.raises(ValueError), db.transaction():
+            _insert_project(db, "discarded")
+            db.after_commit(lambda: hooks.append("discarded"))
+            raise ValueError("rollback savepoint")
+        _insert_project(db, "kept")
+    assert hooks == ["outer"]
+    assert db.read("SELECT id FROM projects") == [("kept",)]
+
+
+def test_postgres_parameters_use_explicit_utc_iso_text():
+    pytest.importorskip("sqlalchemy")
+    from datetime import date, datetime, timedelta, timezone
+    from cairn.backend.storage.postgres import bind_sql
+
+    timestamp = datetime(2026, 10, 17, 23, 30, tzinfo=timezone(timedelta(hours=2)))
+    _, params = bind_sql("SELECT ?, ?", [timestamp, date(2026, 10, 17)])
+    assert params == {"p0": "2026-10-17T21:30:00+00:00", "p1": "2026-10-17"}

@@ -10,8 +10,8 @@ from __future__ import annotations
 import cairn
 import pytest
 
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.db import Database
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.db import Database
 
 
 def _inspect(repo):
@@ -256,8 +256,8 @@ def test_summary_for_an_unknown_run_is_a_404(client):
 
 
 def test_log_ingestion_restores_both_channels(tmp_path):
-    from cairn.server import record_apply
-    from cairn.server.storage.datadir import DataDir
+    from cairn.backend import record_apply
+    from cairn.backend.storage.datadir import DataDir
 
     repo = tmp_path / ".cairn"
     repo.mkdir()

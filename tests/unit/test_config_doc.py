@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import cairn
-from cairn.server import config_doc, ingest_ops
+from cairn.backend import config_doc, ingest_ops
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
              capture_system_metrics=False)

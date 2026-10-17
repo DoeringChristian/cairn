@@ -43,6 +43,10 @@ class UploadError(Exception):
         self.status = status
 
 
+class UploadPending(UploadError):
+    """A valid batch awaits its primary run; keep its journal unacknowledged."""
+
+
 class Gap(Exception):
     """409: the server has applied less than the batch assumes (resend from
     ``applied_seq + 1``), or lacks blobs the batch references

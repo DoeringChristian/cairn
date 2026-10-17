@@ -108,7 +108,7 @@ def test_query_step_best_400(client):
 
 @pytest.fixture
 def auth_client(tmp_path):
-    app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True)
+    app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True, token="query-test-token")
     with TestClient(app) as c:
         yield c
 

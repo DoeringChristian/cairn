@@ -1,4 +1,4 @@
-"""Hyperparameter sweeps from Python — the in-process twin of ``cairn agent``.
+"""Hyperparameter sweeps from Python.
 
 ```python
 def train(config, run):
@@ -15,9 +15,9 @@ sw.run(train, count=20)
 sw.best    # {"params": ..., "value": ..., "run_id": ...}
 ```
 
-Both drive the same sweep routes (``sweep_ops``): claim a trial, open a run
+Workers use the shared sweep backend: claim a trial, open a run
 in the sweep with the trial's params as config, report the outcome. The space
-format is documented in ``cairn.server.sweep_ops``.
+format is documented in ``cairn.backend.sweep_ops``.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from .connect import open_writer
 
 log = logging.getLogger(__name__)
 
-#: Seconds between checks while a sweep is paused (``cairn agent --poll``'s default).
+#: Seconds between checks while a sweep is paused.
 _PAUSE_POLL = 5.0
 
 
@@ -117,8 +117,8 @@ def sweep(
 ) -> "Sweep":
     """Create a sweep over ``space``.
 
-    Run it in process with ``Sweep.run``, or with ``cairn agent <id>`` on any
-    number of machines when ``command`` is set.
+    Run it with ``Sweep.run``. Workers on other machines can open the same
+    sweep by id and claim trials through the selected remote server.
 
     Example:
         ```python
@@ -149,10 +149,10 @@ def sweep(
             independently, forever) or ``"bayes"`` (Optuna's TPE sampler;
             needs the ``[sweep]`` extra).
         name: Display name of the sweep.
-        command: The command ``cairn agent`` runs per trial, as a string or
-            an argument list (wandb's ``command``). The params appear only
-            where an args macro such as ``${args}`` is; see
-            ``expand_command``.
+        command: Optional command metadata for an external trial launcher,
+            as a string or argument list. ``Sweep.run`` executes its Python
+            callable instead. Launchers can use ``expand_command`` to expand
+            parameter macros such as ``${args}``.
         repo: Where the sweep lives, resolved like ``cairn.Run(repo=...)``.
 
     Returns:
@@ -179,7 +179,7 @@ class Sweep:
     itself holds only the id.
 
     Args:
-        sweep_id: The sweep's id (``cairn sweep ls`` lists them).
+        sweep_id: The sweep's id, shown on the Sweeps page.
         project: The sweep's project. Looked up from the sweep when omitted.
         repo: Where the sweep lives, resolved like ``cairn.Run(repo=...)``.
 
@@ -215,7 +215,7 @@ class Sweep:
 
     def pause(self) -> None:
         """Stop handing out new trials until ``resume``; running trials go on.
-        ``cairn agent`` and ``Sweep.run`` wait for the resume."""
+        ``Sweep.run`` workers wait for the resume."""
         self._call("sweep_action", self.id, "pause")
 
     def resume(self) -> None:
@@ -224,7 +224,7 @@ class Sweep:
 
     def stop(self) -> None:
         """Stop the sweep: no new trials, ever; running trials finish
-        normally. Agents and ``Sweep.run`` return once they have no trial."""
+        normally. ``Sweep.run`` workers return once they have no trial."""
         self._call("sweep_action", self.id, "stop")
 
     def cancel(self) -> None:
@@ -332,7 +332,7 @@ def _work(
             })
             transport.report_trial(sweep_id, trial["id"], run_id=run.id, status="running")
             # Dotted parameter names ("optim.lr") nest like hand-written config.
-            from ..server.config_doc import unflatten
+            from cairn.backend.config_doc import unflatten
 
             run.config(unflatten(params))
             value = None

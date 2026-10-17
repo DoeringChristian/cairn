@@ -175,7 +175,9 @@ Every move applies to the page at once and is one [undo](#undo-and-redo) step.
 
     Two tabs or users can edit a workspace at the same time. If one write loses the race, it is replayed on top of the other one's changes, so neither edit is lost.
 
-    A user with a read-only token sees the same page but cannot change the layout: there is no view switcher, **Add card** card, **+ New section**, **Manage cards**, **Duplicate card**, drag grip or unlisted-metrics toggle. Card settings they change (zoom, collapse, smoothing) last until they reload.
+    Published report cards preserve their captured data and layout. Temporary viewing
+    changes, such as zoom, do not create a new publication; edit and publish the report
+    to save a new version. Workspace edits use the server's single access token.
 
 ## Workspace toolbar
 
@@ -214,7 +216,7 @@ Pick the Turbo, Viridis or Magma palette. A legend next to the search box shows 
 
 The link toggle makes charts that share an x-axis zoom together.
 
-On read-only surfaces, such as report viewers and share links, the toolbar shows only the search box.
+On read-only surfaces, such as published report viewers, the toolbar shows only the search box.
 
 ## Defaults cascade
 
@@ -233,7 +235,7 @@ A card saves only its overrides. If you set a value equal to what the card would
 - **↺** appears next to a setting while it is overridden at the level you are editing. Click it to go back to the inherited value.
 - **Reset workspace defaults** or **Reset section defaults** clears every default for the chosen card type at that level.
 
-Reports and share links ignore workspace and section defaults and use the built-in values.
+Reports ignore workspace and section defaults and use the built-in values.
 
 ## Undo and redo
 
@@ -261,7 +263,7 @@ On the run page and in the project workspace, the settings panel is the **card e
 - **Values**: the card's own settings of its values (x axis, ranges, smoothing, outliers, slider key, reference, …), where the card has them.
 - **Type**: the types that can show the data; the left side shows each as a live tile, the current one marked, in place of the card. Picking one (in the list or on its tile) changes the card and goes back to **Data**.
 
-Every change applies at once and can be undone. The section is not set here: drag the card to [move](#editing-the-layout) it. A card's series are its data: the line chart has no metrics picker of its own, its series chips have no ×, and a series chip dropped on a workspace card does nothing; change the **Data** instead. A read-only user gets the card and its own settings, without **Data**, **Type** and the title edit.
+Every change applies at once and can be undone. The section is not set here: drag the card to [move](#editing-the-layout) it. A card's series are its data: the line chart has no metrics picker of its own, its series chips have no ×, and a series chip dropped on a workspace card does nothing; change the **Data** instead. A published report viewer shows the card and its viewing settings; editing the report requires switching to Edit.
 
 - Press ++arrow-left++ / ++arrow-right++, or use the arrow buttons next to the title, to step to the previous or next card in page order. Arrow keys that belong to a focused control, such as a slider or select, don't navigate.
 - Press ++escape++ or click × to close.

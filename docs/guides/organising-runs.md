@@ -28,7 +28,7 @@ cairn.Run("mnist", group="exp-44", job_type="finetune", name="ft-lr1e-4")   # v2
 
 The group and job type show on the run page (the Overview's Run block, and the group as a link
 in the header), in the runs table's **Group** and **Job Type** columns (shown when a listed run
-has one) and in `cairn list` (`GROUP` and `JOB_TYPE` columns). Filters, [expressions](../reference/expressions.md)
+has one). Filters, [expressions](../reference/expressions.md)
 (`run.group`, `run.job_type`) and [`Reader`](reading.md) runs see them too.
 
 ## Versions
@@ -73,8 +73,8 @@ The UI shows the version as a muted `v2` after a run's name, and labels runs
 that share a series `train v1`, `train v2` in charts and legends. Where it
 needs more, it shows what differs: the group first (`exp-44 · train v1` when
 the runs span groups), then the job type (`finetune · ft` next to
-`eval · ft`). `cairn list` has a `VERSION` column and `--sort version`; the
-[Reader](reading.md) has `Run.version`.
+`eval · ft`). The [Reader](reading.md) exposes `Run.version` and supports
+`reader.runs(project).sort("version")`.
 
 ## Latest versions only, Show latest only, Archive old, Delete old
 

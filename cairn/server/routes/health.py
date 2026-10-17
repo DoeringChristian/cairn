@@ -11,10 +11,10 @@ from ._common import get_blobs, get_data_dir, get_db
 
 router = APIRouter(prefix="/api", tags=["health"])
 
-# ``public_router`` is registered WITHOUT the require_role dependency (see
+# ``public_router`` is registered WITHOUT the require_auth dependency (see
 # app.py) — /api/health is a liveness probe and must work unauthenticated,
 # even when auth is enabled. Everything else in this module (info,
-# workspace layout) leaks data and stays behind require_role("read").
+# workspace layout) leaks data and stays behind require_auth.
 public_router = APIRouter(prefix="/api", tags=["health"])
 
 _STARTED_AT = time.time()

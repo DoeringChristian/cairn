@@ -11,10 +11,10 @@ import pytest
 
 import cairn
 from cairn.sdk.transport import Transport
-from cairn.server import ingest_ops
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend import ingest_ops
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 
 def test_http_stop_route_and_heartbeat(client):
@@ -43,22 +43,13 @@ def _run(repo, **kw) -> cairn.Run:
 
 
 def _request_stop(repo, rid):
-    """What the UI's Stop button does: ``POST /api/runs/{id}/stop`` to the
-    repo's server, once the server has the run (uploaded at the group commit)."""
-    from cairn.endpoint import resolve_endpoint
-
-    ep = resolve_endpoint(repo=repo)
-    t = Transport(ep.url, token=ep.token)
+    """Request stopping through the shared local domain operation."""
+    db = Database.open(DataDir(repo).db_path)
     try:
-        def known() -> bool:
-            return t._client.get(f"/api/runs/{rid}").status_code == 200
-
-        _wait(known)
-        r = t._client.post(f"/api/runs/{rid}/stop")
-        r.raise_for_status()
-        return r.json()
+        _wait(lambda: db.read_one("SELECT id FROM runs WHERE id=?", [rid]) is not None)
+        return ingest_ops.request_stop(db, rid)
     finally:
-        t.close()
+        db.close()
 
 
 def _wait(pred, timeout=5.0):

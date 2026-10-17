@@ -106,7 +106,7 @@ The **A** and **B** columns pick two versions to compare (by default the previou
 
 ## Editing
 
-With a write token, the explorer edits a version's annotations. Its files never change.
+The explorer edits a version's annotations. An authenticated server uses its single access token. Its files never change.
 
 - **Aliases**: **+ alias** points an alias at this version. An alias names one version per artifact, so adding one that another version has moves it here. `latest` and `v<N>` are maintained by cairn and are refused; `latest` has no remove button.
 - **Tags**: **+ tag** and **×**. A tag may be on any number of versions.

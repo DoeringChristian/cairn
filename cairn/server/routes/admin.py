@@ -22,7 +22,8 @@ import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from .. import auth, integrity
+from cairn.server import auth
+from cairn.backend import integrity
 from ._common import get_blobs, get_data_dir, get_db
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -37,7 +38,10 @@ async def repo_stats(request: Request) -> dict[str, Any]:
 @router.post("/admin/backup")
 async def make_backup(request: Request) -> dict[str, Any]:
     db, dd = get_db(request), get_data_dir(request)
-    return await anyio.to_thread.run_sync(lambda: integrity.backup(db, dd))
+    try:
+        return await anyio.to_thread.run_sync(lambda: integrity.backup(db, dd))
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from None
 
 
 @router.get("/admin/backups/{name}")
@@ -65,11 +69,3 @@ def shutdown(request: Request) -> dict[str, Any]:
         )
     shutdown_fn()
     return {"stopping": True}
-
-
-@router.post("/auth/login-link")
-def login_link(request: Request) -> dict[str, Any]:
-    principal = auth.principal_from_request(request)
-    if principal is None or principal.share is not None:
-        raise HTTPException(status_code=409, detail="this server runs without auth: open it directly")
-    return {"otp": auth.create_otp(get_db(request), principal.token_id)}

@@ -91,13 +91,14 @@ The effective rule of a metric is resolved in this order:
 In the UI, set them from a metric column's ▾ menu, on the runs table or a Scalars card
 ([Metric column menu](../ui/runs-table.md#metric-column-menu)): **Summary**, **Goal** and
 **Reset to logged**; the menu also shows the logged rule and whether the project overrides it.
-Over HTTP, writing takes the write role:
+Over HTTP, use the server's token when authentication is enabled:
 
 ```bash
 curl -X PUT  $SERVER/api/projects/mnist/metric-rules/val.loss -d '{"summary": "last"}' \
-     -H 'Content-Type: application/json'
-curl -X DELETE $SERVER/api/projects/mnist/metric-rules/val.loss    # back to the logged rule
-curl $SERVER/api/projects/mnist/metric-rules
+     -H 'Content-Type: application/json' -H "Authorization: Bearer $CAIRN_TOKEN"
+curl -X DELETE $SERVER/api/projects/mnist/metric-rules/val.loss \
+     -H "Authorization: Bearer $CAIRN_TOKEN"    # back to the logged rule
+curl $SERVER/api/projects/mnist/metric-rules -H "Authorization: Bearer $CAIRN_TOKEN"
 # {"logged": {"val.loss": "min"}, "overrides": {"val.loss": {"summary": "last", "goal": null}},
 #  "rules": {"val.loss": {"summary": "last", "goal": "lower"}}}
 ```

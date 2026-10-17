@@ -213,6 +213,9 @@ def record_blobs(record: dict[str, Any]) -> list[str]:
     of this run; listing them again is cheap, the uploader remembers what the
     server has)."""
     op = record.get("op")
+    if op == "entry":
+        from cairn.backend.records import media_hashes
+        return sorted(set(media_hashes(record.get("values"))))
     if op in BLOB_OPS and isinstance(record.get("hash"), str):
         return [record["hash"]]
     if op == "create_artifact_version" and isinstance(record.get("digest"), str):

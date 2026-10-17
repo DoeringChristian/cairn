@@ -143,7 +143,7 @@ EVAL/MSE ▾
 └──────────────────────────────────────────┘
 ```
 
-**Summary** (`min`, `max`, `mean`, `last`) picks the number the column shows, **Goal** (lower is better, higher is better, none) which way is better. Both set the metric's [project override](../guides/metric-rules.md#project-overrides): every run of the project, every table and card follows it, for everyone. The muted line shows the rule the runs logged (`summary=` of `run.track`, `none` without one) and `· project overrides` while an override is set; **Reset to logged** removes it. A read-only user sees the values, disabled.
+**Summary** (`min`, `max`, `mean`, `last`) picks the number the column shows, **Goal** (lower is better, higher is better, none) which way is better. Both set the metric's [project override](../guides/metric-rules.md#project-overrides): every run of the project, every table and card follows it, for everyone. The muted line shows the rule the runs logged (`summary=` of `run.track`, `none` without one) and `· project overrides` while an override is set; **Reset to logged** removes it.
 
 ### Computed columns
 
@@ -163,9 +163,8 @@ Tick a row's checkbox to select it; ++shift++-click another checkbox to select t
 | **Archive** / **Unarchive** | Archive or restore the selected runs. Archiving hides a run without changing its status; an archived run shows an `archived` mark beside it. |
 | **Delete** | Delete the selected runs permanently (asks first). |
 
-Export, Archive / Unarchive and Delete have command-line counterparts:
-`cairn export-runs`, `cairn archive` / `cairn unarchive` and `cairn rm` (see
-[Client commands](../guides/server.md#client-commands)).
+Run archives can also be exported and imported through the HTTP API; see
+[Import and export](../guides/import-export.md).
 
 ### Tags on a row
 

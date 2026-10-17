@@ -10,8 +10,8 @@ import pytest
 import cairn
 from cairn.sdk.connect import open_writer
 from cairn.sdk.transport import Transport
-from cairn.server.query_resolver import parse_query_params, resolve
-from cairn.server.storage.db import Database
+from cairn.backend.query_resolver import parse_query_params, resolve
+from cairn.backend.storage.db import Database
 
 R1, R2, R3, R4, R5 = (c * 32 for c in "12345")
 NAMES = {R1: "r1", R2: "r2", R3: "r3", R4: "r4", R5: "r5"}
@@ -60,8 +60,9 @@ def backend(request, tmp_path_factory):
         import httpx
 
         repo = tmp / ".cairn"
-        t, url = open_writer(repo)
-        _seed(t, lambda rid: httpx.post(f"{url}/api/runs/{rid}/archive").raise_for_status())
+        t, _ = open_writer(repo)
+        from cairn.backend.ingest_ops import set_archived
+        _seed(t, lambda rid: set_archived(t._db, rid, True))
         t.close()
         db = Database.open(repo / "cairn.db")
         reader = cairn.Reader(repo)
@@ -83,7 +84,7 @@ def backend(request, tmp_path_factory):
     from cairn.server.app import create_app
     from tests.conftest import _find_free_port
 
-    app = create_app(data_dir=tmp / "cairn", mount_ui=False)
+    app = create_app(data_dir=tmp / "cairn", mount_ui=False, auth_enabled=False)
     port = _find_free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)

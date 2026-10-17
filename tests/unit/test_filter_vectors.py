@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cairn.server._operators import OPERATORS
+from cairn.backend._operators import OPERATORS
 from cairn_ui.cards import spec as _cs
 
 _VECTORS = (

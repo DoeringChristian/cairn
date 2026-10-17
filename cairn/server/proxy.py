@@ -16,7 +16,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .auth import auth_cookie_name, share_cookie_name
+from .auth import auth_cookie_name
 from .ui_mount import mount_viewer
 
 _HOP_BY_HOP = {
@@ -232,7 +232,7 @@ def create_proxy_app(
             if not isinstance(sid, str) or not sid:
                 return frozenset()
             app.state.upstream_cookie_names = frozenset(
-                {auth_cookie_name(sid), share_cookie_name(sid)}
+                {auth_cookie_name(sid)}
             )
         return app.state.upstream_cookie_names
 

@@ -3,7 +3,7 @@
     cairn ui --repo /tmp/cairn-notebook/.cairn --no-auth --no-open-browser &
     CAIRN_REPO=/tmp/cairn-notebook/.cairn marimo edit examples/notebook_embeds.py
 
-Needs `pip install 'cairn-track[ui]' marimo`. In Jupyter the same calls work:
+Needs `pip install 'cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn@v0.7.0' marimo`. In Jupyter the same calls work:
 a run as the last expression of a cell, `run.display(...)`,
 `cairn.ui.workspace(...)` and `cairn.ui.report(...)`. See docs/guides/notebooks.md.
 """

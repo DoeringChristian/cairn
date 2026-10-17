@@ -1,4 +1,4 @@
-"""A project's metric rules (``cairn.server.metric_rules``).
+"""A project's metric rules (``cairn.backend.metric_rules``).
 
 * ``GET /api/projects/{p}/metric-rules`` -> ``{logged: {metric: summary},
   overrides: {metric: {summary, goal}}, rules: {metric: {summary, goal}}}``:
@@ -18,11 +18,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import auth, metric_rules
-from ._common import get_db, slugify
+from cairn.server import auth
+from cairn.backend import metric_rules
+from cairn.server.routes._common import get_db
+from cairn.backend.common import slugify
 
 router = APIRouter(prefix="/api", tags=["metric-rules"])
-_write = Depends(auth.require_role("write"))
+_write = Depends(auth.require_auth)
 
 
 def _project(request: Request, project_id: str) -> str:
@@ -37,17 +39,7 @@ def _project(request: Request, project_id: str) -> str:
 
 def _document(request: Request, project: str) -> dict[str, Any]:
     db = get_db(request)
-    grant = auth.request_share(request)
-    if grant is None:
-        return metric_rules.rules_document(db, project)
-    run_ids = sorted(auth.share_scope(request, grant).run_ids)
-    names: set[str] = set()
-    if run_ids:
-        holes = ",".join("?" * len(run_ids))
-        names = {r[0] for r in db.read(
-            f"SELECT DISTINCT name FROM metric_stats WHERE run_id IN ({holes})", run_ids,
-        )}
-    return metric_rules.rules_document(db, project, run_ids, names)
+    return metric_rules.rules_document(db, project)
 
 
 @router.get("/projects/{project_id}/metric-rules")

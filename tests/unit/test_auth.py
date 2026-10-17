@@ -1,700 +1,90 @@
-"""Auth: tokens, OTP, SSH login, role enforcement."""
-
-from __future__ import annotations
-
-import shutil
-import subprocess
-from datetime import datetime, timedelta, timezone
-
+"""One configured server token; browser and SDK carry the same credential."""
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
-
-from cairn.cli import _print_access_banner
-from cairn.server import auth as auth_core
 from cairn.server.app import create_app
-from cairn.server.routes import auth as auth_routes
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
 
-HAS_SSH_KEYGEN = shutil.which("ssh-keygen") is not None
-
-
-def test_reusable_local_access_token_is_printed_on_every_start(tmp_path, capsys):
-    dd = DataDir(tmp_path / ".cairn")
-    db = Database.open(dd.db_path)
-    try:
-        first = auth_core.ensure_local_token(db, dd.root)
-        first_login_url = _print_access_banner(
-            db, token_plain=first, ui_url="http://localhost:4301",
-            api_url="http://localhost:4301",
-        )
-        first_output = capsys.readouterr().out
-
-        second = auth_core.ensure_local_token(db, dd.root)
-        second_login_url = _print_access_banner(
-            db, token_plain=second, ui_url="http://localhost:4301",
-            api_url="http://localhost:4301",
-        )
-        second_output = capsys.readouterr().out
-
-        assert second == first
-        assert first in first_output
-        assert second in second_output
-        assert "Reusable local access token" in first_output
-        assert "cairn login http://localhost:4301" in first_output
-        assert "http://localhost:4301/login?otp=" in first_output
-        assert first_login_url is not None and first_login_url in first_output
-        assert second_login_url is not None and second_login_url in second_output
-        principal = auth_core.verify_bearer_token(db, first)
-        assert principal is not None
-        assert principal.role == "write"
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def auth_env(tmp_path):
-    """An auth-enabled app + a TestClient + one token per role."""
-    app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True)
-    with TestClient(app) as c:
-        db = app.state.db
-        tokens = {}
-        for role in ("admin", "write", "read"):
-            _id, plain = auth_core.create_token(db, name=f"{role}-token", role=role)
-            tokens[role] = plain
-        yield app, c, tokens
-
-
-@pytest.fixture
-def noauth_env(tmp_path):
-    app = create_app(data_dir=tmp_path / "cairn")  # auth_enabled defaults False
-    with TestClient(app) as c:
-        yield app, c
-
-
-def _tok(client) -> str:
-    """The app's login cookie name (``cairn_token_<server id>``)."""
-    return auth_core.auth_cookie_name(client.app.state.server_id)
-
-
-def _bearer(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def _authed_get(client, path, *, bearer=None, cookie=None):
-    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
-    cookies = {_tok(client): cookie} if cookie else {}
-    return client.get(path, headers=headers, cookies=cookies)
-
-
-# ---------------------------------------------------------------------------
-# Token hashing / CRUD
-# ---------------------------------------------------------------------------
-
-
-def test_token_plaintext_never_persisted(auth_env):
-    app, _c, tokens = auth_env
-    db = app.state.db
-    rows = db.read_columns("SELECT token_hash FROM tokens")
-    hashes = {r["token_hash"] for r in rows}
-    for plain in tokens.values():
-        assert plain not in hashes
-        assert auth_core.hash_secret(plain) in hashes
-
-
-def test_verify_bearer_token_round_trip(auth_env):
-    app, _c, tokens = auth_env
-    db = app.state.db
-    principal = auth_core.verify_bearer_token(db, tokens["read"])
-    assert principal is not None
-    assert principal.role == "read"
-
-    assert auth_core.verify_bearer_token(db, "not-a-real-token") is None
-    assert auth_core.verify_bearer_token(db, "") is None
-
-
-def test_disabled_token_rejected(auth_env):
-    app, _c, tokens = auth_env
-    db = app.state.db
-    assert auth_core.revoke_token(db, "read-token") is True
-    assert auth_core.verify_bearer_token(db, tokens["read"]) is None
-    # revoking an unknown name/id is a clean no-op signal, not an exception
-    assert auth_core.revoke_token(db, "does-not-exist") is False
-
-
-def test_expired_token_rejected(tmp_path):
-    dd = DataDir(tmp_path / "cairn")
-    db = Database.open(dd.db_path)
-    try:
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        _id, plain = auth_core.create_token(db, name="stale", role="read", expires_at=past)
-        assert auth_core.verify_bearer_token(db, plain) is None
-    finally:
-        db.close()
-
-
-def test_otp_rejected_when_backing_token_expired(tmp_path):
-    """The OTP path must honor the backing token's expiry too. Regression
-    for the consume_otp token-expiry gap."""
-    dd = DataDir(tmp_path / "cairn")
-    db = Database.open(dd.db_path)
-    try:
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        token_id, _plain = auth_core.create_token(
-            db, name="shortlived-otp", role="read", expires_at=past
-        )
-        otp = auth_core.create_otp(db, token_id)
-        assert auth_core.consume_otp(db, otp) is None
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# One credential, two carriers (Authorization: Bearer / cairn_token cookie)
-# ---------------------------------------------------------------------------
-
-
-def test_header_and_cookie_resolve_same_principal(auth_env):
-    _app, client, tokens = auth_env
-    plain = tokens["read"]
-    assert _authed_get(client, "/api/runs", bearer=plain).status_code == 200
-    assert _authed_get(client, "/api/runs", cookie=plain).status_code == 200
-    client.cookies.clear()  # carry nothing over into the unauthenticated case
-    assert _authed_get(client, "/api/runs").status_code == 401
-
-
-def test_header_wins_over_cookie(auth_env):
-    _app, client, tokens = auth_env
-    r = client.get(
-        "/api/auth/session",
-        headers={"Authorization": f"Bearer {tokens['admin']}"},
-        cookies={_tok(client): tokens["read"]},
-    )
-    assert r.json()["role"] == "admin"
-
-
-def test_disabled_and_expired_tokens_fail_on_both_carriers(auth_env):
-    app, client, _tokens = auth_env
-    db = app.state.db
-    _tid, plain = auth_core.create_token(
-        db, name="short", role="read", expires_at=auth_core._iso_in(-1)
-    )
-    assert _authed_get(client, "/api/runs", bearer=plain).status_code == 401
-    assert _authed_get(client, "/api/runs", cookie=plain).status_code == 401
-    tid2, plain2 = auth_core.create_token(db, name="gone", role="read")
-    assert auth_core.revoke_token(db, tid2)
-    assert _authed_get(client, "/api/runs", cookie=plain2).status_code == 401
-
-
-def test_stale_session_cookie_is_ignored(auth_env):
-    _app, client, _tokens = auth_env
-    assert client.get("/api/runs", cookies={"cairn_session": "0" * 64}).status_code == 401
-
-
-def test_authenticated_read_never_writes(auth_env, monkeypatch):
-    app, client, tokens = auth_env
-    db = app.state.db
-    writes = []
-    orig_write, orig_tx = db.write, db.transaction
-    monkeypatch.setattr(db, "write", lambda *a, **k: (writes.append(a), orig_write(*a, **k)))
-    monkeypatch.setattr(
-        db, "transaction", lambda *a, **k: (writes.append(("tx",)), orig_tx(*a, **k))[1]
-    )
-    assert _authed_get(client, "/api/runs", cookie=tokens["read"]).status_code == 200
-    assert _authed_get(client, "/api/runs", bearer=tokens["read"]).status_code == 200
-    assert writes == []
-
-
-def test_no_session_symbols_remain():
-    for name in (
-        "create_session",
-        "verify_session",
-        "delete_session",
-        "SESSION_COOKIE",
-        "SESSION_TTL_DAYS",
-        "SESSION_TTL_SECONDS",
-    ):
-        assert not hasattr(auth_core, name), name
-
-
-def test_sweep_expired_still_collects_otp_and_nonce_rows(auth_env):
-    app, _client, _tokens = auth_env
-    db = app.state.db
-    tid = auth_core.get_token(db, "read-token")["id"]
-    db.write(
-        "INSERT INTO auth_otp (otp_hash, token_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        ["dead", tid, auth_core._iso_in(-100), auth_core._iso_in(-50)],
-    )
-    db.write(
-        "INSERT INTO auth_nonces (nonce_hash, namespace, created_at, expires_at) "
-        "VALUES (?, ?, ?, ?)",
-        ["dead", "ssh", auth_core._iso_in(-100), auth_core._iso_in(-50)],
-    )
-    auth_core.create_otp(db, tid)  # mint paths sweep
-    assert db.read_one("SELECT COUNT(*) FROM auth_otp WHERE otp_hash = 'dead'")[0] == 0
-    assert db.read_one("SELECT COUNT(*) FROM auth_nonces WHERE nonce_hash = 'dead'")[0] == 0
-
-
-# ---------------------------------------------------------------------------
-# Route-level 401 / 403 matrix
-# ---------------------------------------------------------------------------
-
-
-def test_health_exempt_without_credentials(auth_env):
-    _app, c, _tokens = auth_env
-    resp = c.get("/api/health")
-    assert resp.status_code == 200
-
-
-def test_read_route_401_without_credentials(auth_env):
-    _app, c, _tokens = auth_env
-    resp = c.get("/api/projects")
-    assert resp.status_code == 401
-
-
-def test_read_route_401_with_garbage_bearer(auth_env):
-    _app, c, _tokens = auth_env
-    resp = c.get("/api/projects", headers=_bearer("garbage"))
-    assert resp.status_code == 401
-
-
-def test_read_route_200_with_read_token(auth_env):
-    _app, c, tokens = auth_env
-    resp = c.get("/api/projects", headers=_bearer(tokens["read"]))
-    assert resp.status_code == 200
-
-
-def test_write_route_403_for_read_token(auth_env):
-    _app, c, tokens = auth_env
-    resp = c.post("/api/projects", json={"name": "demo"}, headers=_bearer(tokens["read"]))
-    assert resp.status_code == 403
-
-
-def test_write_route_200_for_write_token(auth_env):
-    _app, c, tokens = auth_env
-    resp = c.post("/api/projects", json={"name": "demo"}, headers=_bearer(tokens["write"]))
-    assert resp.status_code == 200
-
-
-def test_write_route_200_for_admin_token(auth_env):
-    """Role hierarchy: admin satisfies a write-role requirement."""
-    _app, c, tokens = auth_env
-    resp = c.post("/api/projects", json={"name": "demo2"}, headers=_bearer(tokens["admin"]))
-    assert resp.status_code == 200
-
-
-def test_ingest_route_requires_write(auth_env):
-    _app, c, tokens = auth_env
-    resp = c.post("/api/runs", json={"project": "p"}, headers=_bearer(tokens["read"]))
-    assert resp.status_code == 403
-    resp = c.post("/api/runs", json={"project": "p"}, headers=_bearer(tokens["write"]))
-    assert resp.status_code == 200
-
-
-def test_resolve_artifact_ref_stays_read_despite_post(auth_env):
-    """POST /resolve-artifact-ref is a read/resolve op — no write override."""
-    _app, c, tokens = auth_env
-    c.post("/api/projects", json={"name": "p"}, headers=_bearer(tokens["write"]))
-    resp = c.post(
-        "/api/projects/p/resolve-artifact-ref",
-        json={"ref": "family:latest"},
-        headers=_bearer(tokens["read"]),
-    )
-    # Not found (no such family) is fine — the point is it's not a 401/403.
-    assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# SPA catch-all must not leak /api
-# ---------------------------------------------------------------------------
-
-
-def test_unknown_api_path_404s_not_spa(auth_env):
-    _app, c, _tokens = auth_env
-    resp = c.get("/api/this-route-does-not-exist")
-    assert resp.status_code == 404
-    assert "text/html" not in resp.headers.get("content-type", "")
-
-
-def test_uppercase_api_path_also_refused_by_spa(auth_env):
-    """The SPA catch-all guard is case-insensitive: /API/... never serves
-    the HTML shell either."""
-    _app, c, _tokens = auth_env
-    resp = c.get("/API/this-route-does-not-exist")
-    assert resp.status_code == 404
-    assert "text/html" not in resp.headers.get("content-type", "")
-
-
-# ---------------------------------------------------------------------------
-# Cookie login/logout: the cookie carries the token itself
-# ---------------------------------------------------------------------------
-
-
-def test_login_sets_token_cookie_and_logout_clears_it(auth_env):
-    _app, client, tokens = auth_env
-    r = client.post("/api/auth/login", json={"token": tokens["write"]})
-    assert r.status_code == 200 and r.json() == {"name": "write-token", "role": "write"}
-    assert r.cookies.get(_tok(client)) == tokens["write"]
-    assert "cairn_session" not in r.cookies
-    set_cookie = r.headers["set-cookie"].lower()
-    assert "httponly" in set_cookie and "samesite=lax" in set_cookie
-    assert client.get("/api/runs").status_code == 200  # TestClient keeps the jar
-    r = client.post("/api/auth/logout")
-    assert r.status_code == 200
-    assert client.get("/api/runs").status_code == 401
-
-
-def test_login_invalid_token_401(auth_env):
-    _app, c, _tokens = auth_env
-    resp = c.post("/api/auth/login", json={"token": "nope"})
-    assert resp.status_code == 401
-
-
-def test_session_route_reports_principal_from_either_carrier(auth_env):
-    _app, client, tokens = auth_env
-    assert client.get("/api/auth/session").json()["authenticated"] is False
-    assert (
-        client.get(
-            "/api/auth/session", headers={"Authorization": f"Bearer {tokens['read']}"}
-        ).json()["role"]
-        == "read"
-    )
-    assert (
-        client.get("/api/auth/session", cookies={_tok(client): tokens["read"]}).json()[
-            "authenticated"
-        ]
-        is True
-    )
-
-
-def test_cookie_max_age_follows_token_expiry(auth_env):
-    app, client, _tokens = auth_env
-    db = app.state.db
-    _tid, plain = auth_core.create_token(
-        db, name="hourly", role="read", expires_at=auth_core._iso_in(3600)
-    )
-    r = client.post("/api/auth/login", json={"token": plain})
-    set_cookie = r.headers["set-cookie"]
-    assert "Max-Age=" in set_cookie
-    age = int(set_cookie.split("Max-Age=")[1].split(";")[0])
-    assert 3500 <= age <= 3600
-
-
-def test_session_endpoint_reports_disabled_when_auth_off(noauth_env):
-    _app, c = noauth_env
-    resp = c.get("/api/auth/session")
-    body = resp.json()
-    assert body["authenticated"] is True
-    assert body["auth_enabled"] is False
-
-
-# ---------------------------------------------------------------------------
-# OTP: single-use, short-lived
-# ---------------------------------------------------------------------------
-
-
-def test_otp_exchange_sets_token_cookie(auth_env):
-    app, client, _tokens = auth_env
-    db = app.state.db
-    tid = auth_core.get_token(db, "read-token")["id"]
-    otp = auth_core.create_otp(db, tid)
-    r = client.post("/api/auth/otp", json={"otp": otp})
-    assert r.status_code == 200 and r.cookies.get(_tok(client))
-    assert r.json()["role"] == "read"
-    assert client.get("/api/runs").status_code == 200
-
-    # The cookie holds a *fresh* per-browser token, not the OTP's backing one:
-    # a plaintext is never stored, and this is the per-browser revoke handle.
-    browser = auth_core.verify_token(db, r.cookies.get(_tok(client)))
-    assert browser is not None and browser.role == "read"
-    assert browser.token_id != tid
-    assert browser.name.startswith("read-token-browser-")
-
-    # Second use of the same OTP must fail — single-use.
-    client.cookies.clear()
-    assert client.post("/api/auth/otp", json={"otp": otp}).status_code == 401
-
-
-def test_otp_browser_token_inherits_parent_expiry(auth_env):
-    """A short-lived (``--expires``) token must not be laundered into an
-    unlimited browser token through the one-time login URL."""
-    app, client, _tokens = auth_env
-    db = app.state.db
-    expires_at = auth_core._iso_in(3600)
-    parent_id, _plain = auth_core.create_token(
-        db, name="hourly-parent", role="read", expires_at=expires_at
-    )
-    otp = auth_core.create_otp(db, parent_id)
-
-    r = client.post("/api/auth/otp", json={"otp": otp})
-    assert r.status_code == 200
-    browser = auth_core.verify_token(db, r.cookies.get(_tok(client)))
-    assert browser is not None and browser.token_id != parent_id
-    assert auth_core.get_token(db, browser.token_id)["expires_at"] == expires_at
-    age = int(r.headers["set-cookie"].split("Max-Age=")[1].split(";")[0])
-    assert 3500 <= age <= 3600
-
-
-def test_revoking_a_parent_cascades_to_its_browser_tokens(auth_env):
-    """``cairn token revoke`` is the only way to end all access, so it has to
-    reach the per-browser tokens derived from the revoked one."""
-    app, client, _tokens = auth_env
-    db = app.state.db
-    parent_id, parent_plain = auth_core.create_token(db, name="laptop", role="write")
-    otp = auth_core.create_otp(db, parent_id)
-    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get(_tok(client))
-    client.cookies.clear()
-    browser = auth_core.verify_token(db, browser_plain)
-    assert browser is not None
-    assert auth_core.get_token(db, browser.token_id)["parent_id"] == parent_id
-
-    assert auth_core.revoke_token(db, "laptop") is True
-    assert auth_core.verify_token(db, parent_plain) is None
-    assert auth_core.verify_token(db, browser_plain) is None
-    assert _authed_get(client, "/api/runs", bearer=browser_plain).status_code == 401
-    assert _authed_get(client, "/api/runs", cookie=browser_plain).status_code == 401
-
-
-def test_revoking_a_browser_token_leaves_its_parent_working(auth_env):
-    """The cascade runs one way: a browser token is the revocation handle for
-    that browser alone."""
-    app, client, _tokens = auth_env
-    db = app.state.db
-    parent_id, parent_plain = auth_core.create_token(db, name="desktop", role="write")
-    otp = auth_core.create_otp(db, parent_id)
-    browser_plain = client.post("/api/auth/otp", json={"otp": otp}).cookies.get(_tok(client))
-    client.cookies.clear()
-    browser = auth_core.verify_token(db, browser_plain)
-
-    assert auth_core.revoke_token(db, browser.token_id) is True
-    assert auth_core.verify_token(db, browser_plain) is None
-    assert auth_core.verify_token(db, parent_plain) is not None
-    assert _authed_get(client, "/api/runs", bearer=parent_plain).status_code == 200
-
-
-def test_mint_browser_token_fails_closed_without_a_parent_row(auth_env):
-    """No parent row means no expiry and no revocation handle to inherit —
-    refuse rather than mint an unlimited credential."""
-    app, _client, _tokens = auth_env
-    db = app.state.db
-    ghost = auth_core.Principal(token_id="does-not-exist", name="ghost", role="admin")
-    with pytest.raises(HTTPException) as excinfo:
-        auth_routes._mint_browser_token(db, ghost)
-    assert excinfo.value.status_code == 401
-
-
-def test_otp_expired_rejected(tmp_path):
-    dd = DataDir(tmp_path / "cairn")
-    db = Database.open(dd.db_path)
-    try:
-        token_id, _plain = auth_core.create_token(db, name="t", role="read")
-        otp = auth_core.create_otp(db, token_id)
-        # Force-expire it directly.
-        db.write(
-            "UPDATE auth_otp SET expires_at = ? WHERE otp_hash = ?",
-            [(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), auth_core.hash_secret(otp)],
-        )
-        assert auth_core.consume_otp(db, otp) is None
-    finally:
-        db.close()
-
-
-def test_bootstrap_if_needed_is_idempotent(tmp_path):
-    dd = DataDir(tmp_path / "cairn")
-    db = Database.open(dd.db_path)
-    try:
-        first = auth_core.bootstrap_if_needed(db)
-        assert first is not None
-        second = auth_core.bootstrap_if_needed(db)
-        assert second is None
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# WebSocket: auth before accept()
-# ---------------------------------------------------------------------------
-
-
-def test_noauth_mode_has_no_gate(noauth_env):
-    _app, c = noauth_env
-    resp = c.post("/api/projects", json={"name": "p"})
-    assert resp.status_code == 200
-    resp2 = c.get("/api/projects")
-    assert resp2.status_code == 200
-
-
-def test_cors_same_origin_when_auth_enabled(tmp_path):
-    app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True)
-    cors = next(
-        m for m in app.user_middleware if m.cls.__name__ == "CORSMiddleware"
-    )
-    assert cors.kwargs["allow_origins"] == []
-
-
-def test_cors_wildcard_when_auth_disabled(tmp_path):
-    app = create_app(data_dir=tmp_path / "cairn")
-    cors = next(
-        m for m in app.user_middleware if m.cls.__name__ == "CORSMiddleware"
-    )
-    assert cors.kwargs["allow_origins"] == ["*"]
-
-
-# ---------------------------------------------------------------------------
-# Nonces (SSH login primitives)
-# ---------------------------------------------------------------------------
-
-
-def test_nonce_single_use_and_namespace_bound(tmp_path):
-    dd = DataDir(tmp_path / "cairn")
-    db = Database.open(dd.db_path)
-    try:
-        nonce = auth_core.create_nonce(db, "ns-a")
-        # Wrong namespace fails without consuming...
-        assert auth_core.consume_nonce(db, nonce, "ns-b") is False
-        # ...but the nonce is single-use regardless of pass/fail outcome:
-        # the row was deleted on the first lookup, so a *correct* namespace
-        # on a second attempt also fails.
-        assert auth_core.consume_nonce(db, nonce, "ns-a") is False
-
-        nonce2 = auth_core.create_nonce(db, "ns-c")
-        assert auth_core.consume_nonce(db, nonce2, "ns-c") is True
-        assert auth_core.consume_nonce(db, nonce2, "ns-c") is False
-    finally:
-        db.close()
-
-
-def test_authorized_key_parsing():
-    parsed = auth_core.parse_authorized_key_line(
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBogus alice role=admin"
-    )
-    assert parsed == ("ssh-ed25519", "AAAAC3NzaC1lZDI1NTE5AAAAIBogus", "alice role=admin")
-    assert auth_core.parse_authorized_key_line("not a key line") is None
-
-
-def test_find_authorized_key_default_role_write(tmp_path):
-    dd = DataDir(tmp_path / "cairn")
-    auth_dir = dd.root / "auth"
-    auth_dir.mkdir(parents=True, exist_ok=True)
-    (auth_dir / "authorized_keys").write_text(
-        "# comment\nssh-ed25519 AAAAKEY1 no-role-here\nssh-ed25519 AAAAKEY2 bob role=admin\n"
-    )
-    entry = auth_core.find_authorized_key(dd, "ssh-ed25519", "AAAAKEY1")
-    assert entry is not None
-    assert entry["role"] == "write"
-    entry2 = auth_core.find_authorized_key(dd, "ssh-ed25519", "AAAAKEY2")
-    assert entry2["role"] == "admin"
-    assert auth_core.find_authorized_key(dd, "ssh-ed25519", "NOPE") is None
-
-
-def test_ssh_challenge_endpoint(auth_env):
-    _app, c, _tokens = auth_env
-    resp = c.get("/api/auth/ssh/challenge")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["nonce"] and body["namespace"].startswith("cairn-login-")
-
-
-def test_ssh_verify_rejects_unknown_key(auth_env):
-    _app, c, _tokens = auth_env
-    challenge = c.get("/api/auth/ssh/challenge").json()
-    resp = c.post(
-        "/api/auth/ssh/verify",
-        json={
-            "nonce": challenge["nonce"],
-            "namespace": challenge["namespace"],
-            "pubkey": "ssh-ed25519 AAAAUNKNOWNKEY comment",
-            "signature": "not-a-real-signature",
-        },
-    )
-    assert resp.status_code == 401
-
-
-def _authorize_ssh_key(dd, tmp_path, role: str = "admin"):
-    """Generate a keypair and authorize it in ``DATA_DIR/auth/authorized_keys``."""
-    keyfile = tmp_path / "id_test"
-    subprocess.run(
-        ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(keyfile), "-C", "tester"],
-        check=True, capture_output=True,
-    )
-    pubkey_line = (tmp_path / "id_test.pub").read_text().strip()
-    auth_dir = dd.root / "auth"
-    auth_dir.mkdir(parents=True, exist_ok=True)
-    (auth_dir / "authorized_keys").write_text(f"{pubkey_line} role={role}\n")
-    return keyfile, pubkey_line
-
-
-def _sign_nonce(keyfile, tmp_path, nonce: str, namespace: str) -> str:
-    message_path = tmp_path / "message"
-    message_path.write_text(nonce)
-    subprocess.run(
-        ["ssh-keygen", "-Y", "sign", "-f", str(keyfile) + ".pub", "-n", namespace, str(message_path)],
-        check=True, capture_output=True,
-    )
-    return (tmp_path / "message.sig").read_text()
-
-
-@pytest.mark.skipif(not HAS_SSH_KEYGEN, reason="needs ssh-keygen")
-def test_ssh_verify_sets_token_cookie(auth_env, tmp_path):
-    app, client, _tokens = auth_env
-    keyfile, pubkey_line = _authorize_ssh_key(app.state.data_dir, tmp_path)
-    challenge = client.get("/api/auth/ssh/challenge").json()
-    signature = _sign_nonce(keyfile, tmp_path, challenge["nonce"], challenge["namespace"])
-
-    r = client.post(
-        "/api/auth/ssh/verify",
-        json={
-            "nonce": challenge["nonce"],
-            "namespace": challenge["namespace"],
-            "pubkey": pubkey_line,
-            "signature": signature,
-            "name": "ssh-cookie-tester",
-        },
-    )
-    assert r.status_code == 200, r.text
-    # The browser is logged in by the same plaintext the CLI receives in the body.
-    assert r.cookies.get(_tok(client)) == r.json()["token"]
-    assert client.get("/api/runs").status_code == 200
-
-
-@pytest.mark.skipif(not HAS_SSH_KEYGEN, reason="ssh-keygen not available")
-def test_ssh_login_full_round_trip(auth_env, tmp_path):
-    app, c, _tokens = auth_env
-    dd = app.state.data_dir
-    keyfile, pubkey_line = _authorize_ssh_key(dd, tmp_path)
-
-    challenge = c.get("/api/auth/ssh/challenge").json()
-    nonce, namespace = challenge["nonce"], challenge["namespace"]
-    signature = _sign_nonce(keyfile, tmp_path, nonce, namespace)
-
-    resp = c.post(
-        "/api/auth/ssh/verify",
-        json={
-            "nonce": nonce, "namespace": namespace, "pubkey": pubkey_line,
-            "signature": signature, "name": "ssh-tester",
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["role"] == "admin"
-    assert body["name"] == "ssh-tester"
-
-    # The nonce is single-use — replaying the same challenge must fail.
-    resp2 = c.post(
-        "/api/auth/ssh/verify",
-        json={
-            "nonce": nonce, "namespace": namespace, "pubkey": pubkey_line,
-            "signature": signature, "name": "ssh-tester-2",
-        },
-    )
-    assert resp2.status_code == 401
-
-    # The minted token actually works.
-    resp3 = c.get("/api/projects", headers=_bearer(body["token"]))
-    assert resp3.status_code == 200
+@pytest.mark.parametrize('header,expected', [(None,200),('Bearer invalid',401),('Basic invalid',401),('Bearer secret',200)])
+def test_header_takes_precedence_over_browser_cookie(tmp_path, header, expected):
+    with TestClient(create_app(data_dir=tmp_path, auth_enabled=True, token='secret')) as client:
+        assert client.post('/api/auth/login', json={'token':'secret'}).status_code == 200
+        headers={} if header is None else {'Authorization':header}
+        assert client.get('/api/projects',headers=headers).status_code == expected
+
+def test_default_server_auth_creates_private_persistent_token(tmp_path, monkeypatch):
+    import stat
+    monkeypatch.delenv('CAIRN_TOKEN', raising=False)
+    monkeypatch.delenv('CAIRN_TOKEN_FILE', raising=False)
+    app = create_app(data_dir=tmp_path)
+    token = (tmp_path/'token').read_text().strip()
+    assert len(token) >= 32
+    assert stat.S_IMODE((tmp_path/'token').stat().st_mode) == 0o600
+    assert create_app(data_dir=tmp_path).state.token == token
+    with TestClient(app) as client:
+        assert client.get('/api/health').status_code == 200
+        assert client.get('/api/projects').status_code == 401
+        assert client.get('/api/projects', headers={'Authorization': 'Bearer '+token}).status_code == 200
+
+
+def test_token_creation_is_atomic_under_concurrent_startup(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from cairn.server.auth import ensure_token_file
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        tokens = list(pool.map(lambda _: ensure_token_file(tmp_path/'token'), range(40)))
+    assert len(set(tokens)) == 1
+    assert list(tmp_path.iterdir()) == [tmp_path/'token']
+
+
+def test_auth_disabled_never_creates_token(tmp_path, monkeypatch):
+    monkeypatch.setenv('CAIRN_TOKEN', '')
+    with TestClient(create_app(data_dir=tmp_path, auth_enabled=False)) as client:
+        assert client.get('/api/projects').status_code == 200
+    assert not (tmp_path/'token').exists()
+
+
+def test_credential_precedence(tmp_path, monkeypatch):
+    monkeypatch.setenv('CAIRN_TOKEN', 'environment')
+    assert create_app(data_dir=tmp_path, token='explicit').state.token == 'explicit'
+    assert create_app(data_dir=tmp_path).state.token == 'environment'
+    assert not (tmp_path/'token').exists()
+    monkeypatch.delenv('CAIRN_TOKEN')
+    file = tmp_path/'custom-token'
+    file.write_text('from-file\n')
+    monkeypatch.setenv('CAIRN_TOKEN_FILE', str(file))
+    assert create_app(data_dir=tmp_path).state.token == 'from-file'
+
+
+@pytest.mark.parametrize('token', ['', 'two words', 'with\nnewline', 'x'*4097])
+def test_invalid_token_is_rejected(tmp_path, token):
+    with pytest.raises(ValueError, match='token must'):
+        create_app(data_dir=tmp_path, token=token)
+
+
+def test_token_file_rejects_symlink_and_oversize(tmp_path):
+    from cairn.server.auth import ensure_token_file
+    target = tmp_path/'target'
+    target.write_text('secret')
+    link = tmp_path/'link'
+    link.symlink_to(target)
+    with pytest.raises(OSError):
+        ensure_token_file(link)
+    target.write_text('x'*4097)
+    with pytest.raises(ValueError, match='at most 4096'):
+        ensure_token_file(target)
+
+
+def test_logout_clears_browser_credential_but_keeps_sdk_token(tmp_path):
+    with TestClient(create_app(data_dir=tmp_path,auth_enabled=True,token='secret')) as client:
+        response=client.post('/api/auth/login',json={'token':'secret'})
+        assert 'HttpOnly' in response.headers['set-cookie']
+        assert 'SameSite=strict' in response.headers['set-cookie']
+        assert client.post('/api/auth/logout').status_code == 200
+        assert client.get('/api/projects').status_code == 401
+        assert client.get('/api/projects',headers={'Authorization':'Bearer secret'}).status_code == 200
+
+def test_cookie_is_scoped_to_the_repo(tmp_path):
+    with TestClient(create_app(data_dir=tmp_path/'one',auth_enabled=True,token='one')) as first:
+        first.post('/api/auth/login',json={'token':'one'})
+        with TestClient(create_app(data_dir=tmp_path/'two',auth_enabled=True,token='two')) as second:
+            second.cookies.update(first.cookies)
+            response=second.get('/api/projects')
+            assert response.status_code == 401

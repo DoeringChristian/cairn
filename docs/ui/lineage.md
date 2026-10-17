@@ -34,7 +34,7 @@ Click a card to open its details on the right (click the background or **×** to
 - **Version**: aliases and tags (editable), description (editable), digest, created, step, files and size, the run that logged it, the number of consumers, **Open in explorer** and **Files**.
 - **Group**: its members (clicking one expands the group and selects it) and **Expand group**.
 
-Editing follows the explorer's rules ([Editing](artifacts.md#editing)); the cards update as soon as an edit is saved. With a read-only token, the panel shows the same details without editors.
+Editing follows the explorer's rules ([Editing](artifacts.md#editing)); the cards update as soon as an edit is saved.
 
 ## Highlighting a path
 

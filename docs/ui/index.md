@@ -13,31 +13,35 @@ cairn ui --repo path/to/.cairn --port 8080
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--repo` | `./.cairn` | Local `.cairn/` directory, or a remote `cairn://HOST:PORT` / `http(s)://` server. |
-| `--host` | `127.0.0.1` | Interface to bind. |
-| `--port` | `4301` | Port. If it is taken, the next free port above it is used. |
+| `--repo` | Configured destination, else `./.cairn` | A local repository path or a remote `cairn://HOST:PORT` / `http(s)://` server. |
+| `--host` | `127.0.0.1` | Loopback interface: `127.0.0.1`, `localhost` or `::1`. |
+| `--port` | `4301` | Port to bind. |
 | `--open-browser / --no-open-browser` | on | Open a browser tab after startup. |
-| `--no-auth` | off | Disable authentication (local repos only). |
-| `--verbose` | off | Show the HTTP server's info and access logs. |
-| `--alert-webhook URL` | none | Post alerts to an ntfy topic, a Slack or Discord webhook, or any JSON webhook (local repos only; env `CAIRN_ALERT_WEBHOOK`). |
 
-To run a network server and the UI together, use `cairn server --ui`; the UI then listens on the server's port + 1 (`--ui-port` overrides it). If a server already serves the repo (a `cairn server`, another `cairn ui`, or the background server that runs, Readers and CLI commands start), `cairn ui` opens that server's viewer and returns instead of starting another.
+A local UI runs on loopback without authentication. Starting it is explicit;
+SDK runs and Readers continue to access the local database directly. To expose
+a repository on a network, use `cairn server --repo PATH --host 0.0.0.0`. The
+server includes the UI by default on the same port (`4300` unless changed).
 
 ### Logging in
 
-Authentication is on by default. On startup `cairn ui` prints:
-
-- a reusable access token, stored in `<repo>/auth/local.token`;
-- a one-time browser login link (`/login?otp=…`), single-use and valid for 15 minutes. With `--open-browser`, this is the link that opens.
-
-If the link has expired, open the UI and paste a token into the login form (a token from `cairn token create` works too). The footer shows your name and role, with a **Log out** link. Tokens, roles and deployment are covered in [Server, auth and deployment](../guides/server.md).
+`cairn server` enables authentication by default. It uses `CAIRN_TOKEN` or a
+private token file, creating `<repo>/token` when no credential is configured.
+Startup prints a browser login link carrying the same token in a URL fragment.
+The browser exchanges it for an HttpOnly cookie and clears it from the address
+bar. You can also paste the token into the login form. There is one server
+credential, with no separate user roles or one-time passwords. See
+[Server and authentication](../guides/server.md).
 
 ### Remote servers
 
-`cairn ui --repo cairn://HOST:PORT` serves the UI locally and proxies its API to the remote server. The proxy binds to loopback only, and `--no-auth` is not accepted. With a token for that server (`cairn login cairn://HOST:PORT`, or `CAIRN_TOKEN`) the proxy authenticates for you; without one you log in in the browser.
+`cairn ui --repo cairn://HOST:PORT` serves the UI locally and proxies its API to
+the remote server. The proxy binds to loopback only. With a
+[resolved token](../reference/configuration.md#the-token), it authenticates for
+you; otherwise log in through the browser using the remote server's token.
 
 !!! tip "Prefer `localhost` over a LAN IP"
-    Serving the page from loopback keeps it a browser *secure context*. Some browser features, such as copying a run id or a share link to the clipboard, only work in a secure context, so they can fail on a plain-HTTP LAN address.
+    Serving the page from loopback keeps it a browser *secure context*. Some browser features, such as copying a run ID or a source reference to the clipboard, only work in a secure context, so they can fail on a plain-HTTP LAN address.
 
 ## Layout
 
@@ -48,15 +52,16 @@ The top bar holds the **Cairn** logo (back to the projects list), a **Projects**
 The home page lists every project with its last run time, total runs and currently active runs. From here you can:
 
 - **New project**: type a name, press ++enter++ (or ++escape++ to cancel).
-- **Import runs**: upload a `.zip` produced by the runs table's **Export** action (`cairn export` writes metrics, not run archives). Imported runs get new ids. See [Import and export](../guides/import-export.md).
+- **Import runs**: upload a `.zip` produced by the runs table's **Export** action. Imported runs get new ids. See [Import and export](../guides/import-export.md).
 
 ### Inside a project
 
-Every project page has a left navigation bar (a bottom bar on phones):
+Projects open on Reports. Every project page has a left navigation bar
+(a bottom bar on phones):
 
 | Page | Path | What it is |
 |---|---|---|
-| Runs | `/p/<project>` | The [runs table](runs-table.md). |
+| Runs | `/p/<project>/runs` | The [runs table](runs-table.md). |
 | Workspace | `/p/<project>/workspace` | [Project workspace](project-workspace.md): the current view bound to the runs its sidebar picks. |
 | Sweeps | `/p/<project>/sweeps` | Sweeps and their trials ([Sweeps](../guides/sweeps.md)). |
 | Artifacts | `/p/<project>/artifacts` | The [artifact explorer](artifacts.md): artifacts, versions, files, usage snippets. |
@@ -68,12 +73,13 @@ A breadcrumb (`Projects › <project> › <run>`) sits above the content; on a r
 
 ### Run page
 
-Click a run's name to open `/p/<project>/r/<run id>`. The run page has six tabs, and opens on **Workspace** (as wandb's):
+Click a run's name to open `/p/<project>/r/<run id>`. The run page has seven tabs, and opens on **Workspace** (as wandb's):
 
 | Tab | Contents |
 |---|---|
 | Workspace | `/p/<project>/r/<run id>`: the run's card workspace without its `system.*` series; cards with no data for the run are hidden ([Run page and workspace](workspace.md), [Cards](cards.md)). |
 | Overview | `…/overview`: the Run block (notes, tags, state, group, job type, version, times, author, host, git, command, run path), the config and summary tables with a search each, the run's artifacts ([Overview](workspace.md#overview)). |
+| Records | Structured log entries, with filters and selectable fields. |
 | System | The same workspace over the run's `system.*` series. |
 | Logs | Captured console output, filterable by stream. |
 | Files | The captured source files, then the environment and `pip freeze`. |
@@ -106,8 +112,8 @@ The UI adapts to narrow screens (below 768 px) and to touch input:
 - **Navigation**: the top bar collapses into a menu button; project navigation moves to a bottom bar.
 - **Runs table**: rows become a list of run cards. The selection bar keeps **Clear**, **Tag** and **Show in workspace** and moves the other actions into **More**.
 - **Card grid**: one column, no resize handles; a card's fixed height is capped at 75% of the viewport.
-- **Card headers**: on narrow screens the shared actions (Screenshot, Download data, Reset view, Settings, Duplicate card, Remove card) move into the card's **⋯** menu; Add to report stays a button. On touch devices the menu also offers **Move up** / **Move down** instead of drag-to-reorder.
-- **Tap to interact**: on touch devices, charts, image panes and 3D views start non-interactive, so a one-finger drag scrolls the page. Tap the hand button in the card header to pan and zoom the content; tap it again to go back to scrolling. In full screen the content is always interactive.
+- **Card headers**: the camera, settings and **⋯** actions use the shared card header. Secondary actions appear in **⋯**. On touch devices it also offers **Move up** / **Move down** instead of drag-to-reorder.
+- **Tap to interact**: on touch devices, charts, image panes and 3D views start non-interactive, so a one-finger drag scrolls the page. Use **Interact with content** in the card's **⋯** menu to pan and zoom the content; switch it off to return to scrolling. In full screen the content is always interactive.
 - **Charts on touch**: drag to zoom, tap for the tooltip, double-tap to reset.
 - **Overlays**: popovers open as bottom sheets and dialogs go full screen on small viewports (including a phone in landscape).
 - **Hover controls**: controls that a mouse reveals on hover (row toggles, the column menu button, tag remove buttons) are always visible on touch devices, with larger touch targets.

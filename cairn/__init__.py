@@ -33,6 +33,12 @@ from .config import configure  # noqa: E402
 
 _LAZY_ATTRS: dict[str, str] = {
     "Run": ".sdk.run",
+    "init": ".sdk.api",
+    "log": ".sdk.api",
+    "track": ".sdk.api",
+    "finish": ".sdk.api",
+    "define_metric": ".sdk.api",
+    "use_artifact": ".sdk.api",
     "attach": ".sdk.run",
     "new_run_id": ".sdk.run_ids",
     "Scope": ".sdk.scope",
@@ -77,6 +83,7 @@ if TYPE_CHECKING:  # static-analysis only — never executed, never eager at run
     from .sdk.query_urls import query_url
     from .sdk.reader import MediaRef, Reader
     from .sdk.run import Run, attach
+    from .sdk.api import init, log, track, finish, define_metric, use_artifact
     from .sdk.run_ids import new_run_id
     from .sdk.sweep import Sweep, sweep
     from .sdk.custom_viewers import publish_viewer
@@ -139,6 +146,9 @@ _EXTRA_HINT = (
 def __getattr__(name: str):
     """PEP 562 lazy loader for the top-level API (see module docstring)."""
     try:
+        if name == "run":
+            from .sdk.api import current_run
+            return current_run()
         if name == "ui":
             module = importlib.import_module(f".{name}", __name__)
             globals()[name] = module
@@ -171,6 +181,13 @@ def __dir__() -> list[str]:
 __all__ = [
     "__version__",
     "Run",
+    "init",
+    "log",
+    "track",
+    "finish",
+    "run",
+    "define_metric",
+    "use_artifact",
     "attach",
     "new_run_id",
     "Scope",
@@ -216,7 +233,7 @@ def log_artifact(
     artifact: Any,
     name: str | None = None,
     *,
-    project: str,
+    project: str | None = None,
     type: str = "artifact",
     aliases: list[str] | None = None,
     tags: list[str] | None = None,
@@ -224,7 +241,7 @@ def log_artifact(
     description: str | None = None,
     repo: str | Path | None = None,
 ) -> "ArtifactVersion":
-    """Log a new artifact version without a run (it has no producing run).
+    """Log to the default run, or publish without a run using explicit project=.
 
     Same forms as ``Run.log_artifact``: a ``cairn.Artifact`` draft, or a
     shorthand (a directory, a file, any value) with a ``name``.
@@ -252,6 +269,14 @@ def log_artifact(
         The new ``ArtifactVersion`` (registered at once: written through the
         repo's ingest-lease holder).
     """
+    if project is None:
+        if repo is not None:
+            raise TypeError('Set project when publishing an artifact to an explicit repo')
+        from .sdk.api import require_run
+        return require_run().log_artifact(
+            artifact, name, type=type, aliases=aliases, tags=tags,
+            metadata=metadata, description=description,
+        )
     import functools
 
     from .sdk import handlers as _handlers  # noqa: F401  (register built-ins)
@@ -259,7 +284,7 @@ def log_artifact(
     from .sdk.artifacts import Artifact as _Artifact
     from .sdk.artifacts import draft_from_shorthand
     from .sdk.handlers.registry import default_registry
-    from .sdk.run import backend_for_transport, log_draft
+    from .sdk.run_artifacts import backend_for_transport, log_draft
     from .server.routes._common import slugify
 
     if isinstance(artifact, _Artifact):

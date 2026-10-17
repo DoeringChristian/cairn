@@ -19,7 +19,7 @@ def _client(tmp_path, monkeypatch) -> TestClient:
     (dist / "assets" / "main-abc.js").write_bytes(JS)
     (dist / "assets" / "logo-abc.png").write_bytes(b"\x89PNG" + b"\0" * 4096)
     monkeypatch.setenv("CAIRN_UI_DIST", str(dist))
-    return TestClient(create_app(data_dir=tmp_path / "cairn", mount_ui=True))
+    return TestClient(create_app(data_dir=tmp_path / "cairn", mount_ui=True, auth_enabled=False))
 
 
 def test_assets_are_immutable_and_gzipped(tmp_path, monkeypatch) -> None:

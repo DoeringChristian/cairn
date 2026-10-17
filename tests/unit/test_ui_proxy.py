@@ -314,7 +314,7 @@ def test_proxy_relays_only_the_upstreams_own_cookies():
         sent = dict(
             part.strip().split("=", 1) for part in request.headers["cookie"].split(";")
         )
-        assert sent == {TOK: "mine", f"cairn_share_{SID}": "my-share"}
+        assert sent == {TOK: "mine"}
 
 
 def test_proxy_relays_no_cookie_while_upstream_id_is_unknown():

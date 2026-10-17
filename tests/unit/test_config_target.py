@@ -28,10 +28,18 @@ def test_default_fallback_to_cwd_cairn():
     assert target.location == str(Path.cwd() / ".cairn")
 
 
-def test_explicit_repo_wins_over_server_kwarg(tmp_path):
-    target = config.resolve_target(repo=tmp_path / "a", server="http://s")
-    assert target.is_local
-    assert target.location.endswith("a")
+def test_explicit_repo_and_server_are_mutually_exclusive(tmp_path):
+    with pytest.raises(ValueError, match='not both'):
+        config.resolve_target(repo=tmp_path / 'a', server='http://s')
+
+
+def test_configuring_a_destination_replaces_the_previous_kind(tmp_path):
+    config.configure(repo=tmp_path/'a')
+    config.configure(server='http://s')
+    assert config.resolve_target().location == 'http://s'
+    config.configure(repo=tmp_path/'b')
+    assert config.resolve_target().is_local
+    assert config.resolve_target().location == str(tmp_path/'b')
 
 
 def test_server_kwarg_used_when_no_repo():

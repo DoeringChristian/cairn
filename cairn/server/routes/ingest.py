@@ -1,6 +1,6 @@
 """Direct write endpoints: run creation, edits, points, blobs, lifecycle.
 
-Thin HTTP wrappers around ``cairn.server.ingest_ops``. The upload protocol
+Thin HTTP wrappers around ``cairn.backend.ingest_ops``. The upload protocol
 of run directories (records + blobs) is ``routes/records.py``.
 """
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 from typing import Any, Callable, TypeVar
 
@@ -24,7 +23,7 @@ from fastapi import (
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 
-from .. import ingest_ops
+from cairn.backend import ingest_ops
 from ._common import get_blobs, get_data_dir, get_db
 
 router = APIRouter(prefix="/api", tags=["ingest"])
@@ -251,7 +250,7 @@ async def post_batch(run_id: str, request: Request) -> dict[str, Any]:
         accepted = await _ingest_thread(request, work)
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
-    except sqlite3.IntegrityError as exc:
+    except db.integrity_errors as exc:
         # A constraint the batch violates: final, so 409. Anything else (a
         # locked database, say) stays a 5xx, which a client may retry.
         raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -326,7 +325,7 @@ async def post_artifact(request: Request) -> dict[str, Any]:
 @router.post("/runs/{run_id}/source")
 async def post_source(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
-    dd = get_data_dir(request)
+    blobs = get_blobs(request)
     try:
         form = await request.form(max_part_size=MAX_MULTIPART_PART_BYTES)
     except Exception as exc:  # noqa: BLE001
@@ -344,7 +343,7 @@ async def post_source(run_id: str, request: Request) -> dict[str, Any]:
     data = await archive.read()
     try:
         return await _ingest_thread(
-            request, lambda: ingest_ops.save_source(db, dd, run_id, data, manifest_dict),
+            request, lambda: ingest_ops.save_source(db, blobs, run_id, data, manifest_dict),
         )
     except ingest_ops.RunNotFound as exc:
         raise _run_not_found(exc) from None
@@ -623,7 +622,7 @@ _gc_again = threading.Event()
 def _collect_garbage(app: Any) -> None:
     """Background GC after run deletions: one at a time; deletions during a
     collection make it run once more."""
-    from .. import gc
+    from cairn.backend import gc
 
     _gc_again.set()
     if not _gc_lock.acquire(blocking=False):
@@ -642,7 +641,7 @@ def _collect_garbage(app: Any) -> None:
 async def collect_garbage(request: Request, dry_run: bool = False) -> dict[str, Any]:
     """Delete blobs nothing references that are older than a day (``cairn gc``).
     Returns the count and bytes freed (what would be, with ``dry_run``)."""
-    from .. import gc
+    from cairn.backend import gc
 
     db = get_db(request)
     dd = get_data_dir(request)

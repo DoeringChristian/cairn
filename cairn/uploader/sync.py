@@ -144,16 +144,15 @@ def endpoint_for(run_dir: RunDir) -> tuple[str, str | None]:
     """``(url, token)`` of the server a run directory uploads to.
 
     Raises:
-        Exception: The endpoint cannot be resolved (or started) now.
+        Exception: The recorded remote endpoint is invalid.
     """
     from ..endpoint import resolve_endpoint
 
     meta = run_dir.meta()
     server = meta.get("endpoint")
-    if server in (None, "local"):
-        ep = resolve_endpoint(repo=meta.get("repo")) if meta.get("repo") else resolve_endpoint()
-    else:
-        ep = resolve_endpoint(server=server)
+    if server in (None, 'local'):
+        return Path(meta.get('repo') or '.cairn').resolve().as_uri(), None
+    ep = resolve_endpoint(server=server)
     return ep.url, meta.get("token") or ep.token
 
 
@@ -173,7 +172,12 @@ def sync_paths(
     def default_client(rd: RunDir) -> IngestClient:
         key = endpoint_for(rd)
         if key not in clients:
-            clients[key] = IngestClient(*key)
+            if key[0].startswith('file:'):
+                from urllib.parse import unquote, urlsplit
+                from .local import LocalIngestClient
+                clients[key] = LocalIngestClient(unquote(urlsplit(key[0]).path))
+            else:
+                clients[key] = IngestClient(*key)
         return clients[key]
 
     pick = client_for or default_client

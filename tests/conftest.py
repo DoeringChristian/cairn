@@ -15,9 +15,9 @@ from fastapi.testclient import TestClient
 
 from cairn.server.app import create_app
 from tests import standin_server
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 # No test may open a browser tab on the developer's machine: Python's
 # `webbrowser` runs $BROWSER when it is set, here a no-op command. Set at
@@ -29,6 +29,9 @@ os.environ["BROWSER"] = "true"
 # HTTP client, the Reader's blob cache): one temp dir for the whole session,
 # inherited by subprocesses too.
 os.environ["CAIRN_CACHE_DIR"] = tempfile.mkdtemp(prefix="cairn-test-cache-")
+# Automatic credential discovery must never read the developer's real token.
+# Child processes inherit the same isolated user configuration directory.
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="cairn-test-config-")
 
 # A daemon server a test's subprocess starts (a CLI command, a script) must
 # not outlive the test run by the default 30 min.
@@ -69,7 +72,7 @@ def blob_store(data_dir: DataDir) -> BlobStore:
 def app(tmp_path):
     # Explicit even though it is now the default: the API tests that use this
     # must not depend on whether a viewer happens to be installed.
-    return create_app(data_dir=tmp_path / "cairn", mount_ui=False)
+    return create_app(data_dir=tmp_path / "cairn", mount_ui=False, auth_enabled=False)
 
 
 @pytest.fixture
@@ -85,7 +88,7 @@ def ui_app(tmp_path):
 
     if not viewer.is_available():
         pytest.skip("cairn-ui viewer not installed")
-    return create_app(data_dir=tmp_path / "cairn", mount_ui=True)
+    return create_app(data_dir=tmp_path / "cairn", mount_ui=True, auth_enabled=False)
 
 
 @pytest.fixture
@@ -147,7 +150,7 @@ class _RepoServers:
     def start(self, root: Path):
         from cairn.server.registration import write_info
 
-        app = create_app(data_dir=root, mount_ui=False)
+        app = create_app(data_dir=root, mount_ui=False, auth_enabled=False)
         port = _find_free_port()
         server = uvicorn.Server(uvicorn.Config(
             app=app, host="127.0.0.1", port=port, log_level="warning", lifespan="on",
@@ -199,59 +202,22 @@ _SERVERS = _RepoServers()
 
 import cairn.endpoint as _endpoint  # noqa: E402
 
-_REAL_START_SERVER = _endpoint.start_server
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _repo_servers_session():
-    """Local repos are served in-process during tests (see ``_RepoServers``);
-    servers started by module- or session-scoped fixtures stop at the end."""
-    import cairn.endpoint
-
-    real = cairn.endpoint.start_server
-    cairn.endpoint.start_server = _SERVERS.start
-    try:
-        yield _SERVERS
-    finally:
-        cairn.endpoint.start_server = real
-        _SERVERS.stop_from(0)
-
-
 @pytest.fixture(autouse=True)
-def repo_servers(request, monkeypatch, _repo_servers_session):
-    """The in-process servers a test started stop when it ends. Tests marked
-    ``real_daemons`` get real daemon subprocesses instead."""
-    if "real_daemons" in request.keywords:
-        import cairn.endpoint
-
-        monkeypatch.setattr(cairn.endpoint, "start_server", _REAL_START_SERVER)
-        yield None
-        return
-    if not getattr(request.module, "STANDIN", True):
-        # Modules testing the client on its own: no server comes up for a repo.
-        import cairn.endpoint
-
-        def offline(root):
-            raise cairn.endpoint.EndpointUnavailable(f"no server is serving {root} (test)")
-
-        monkeypatch.setattr(cairn.endpoint, "start_server", offline)
+def repo_servers():
     mark = len(_SERVERS.running)
     try:
         yield _SERVERS
     finally:
         _SERVERS.stop_from(mark)
 
-
 @pytest.fixture(autouse=True)
 def _upload_on_commit(request, monkeypatch):
-    """Runs upload at every group commit, in-process, to the repo's (test)
-    server: tests read back right after logging. A module sets
-    ``STANDIN = False`` to test the client on its own."""
-    if getattr(request.module, "STANDIN", True):
+    # Remote SDK tests still get deterministic delivery without launching a daemon.
+    if getattr(request.module, 'STANDIN', True):
         standin_server.install(monkeypatch)
     yield
 
-
-def ingest_repo(repo) -> None:
-    """Upload a local repo's pending run directories now."""
-    standin_server.sync_repo(repo)
+def ingest_repo(repo):
+    from cairn.sdk.reader import Reader
+    with Reader(repo) as reader:
+        reader.projects()

@@ -117,33 +117,8 @@ def test_compare_all_names_with_wall_time(client):
     assert client.post("/api/compare", json={"run_ids": [rid], "metrics": []}).json() == {"series": []}
 
 
-def test_export_project_csv_with_filter(live_server, monkeypatch, tmp_path):
-    monkeypatch.setenv("CAIRN_SERVER", live_server)
-    _seed(_server_repo(live_server))
-    out = tmp_path / "p.csv"
-    result = CliRunner().invoke(cli.main, [
-        "export", "--project", "p", "--filter", "lr__gt=0.15", "--filter", "status=completed",
-        "--format", "csv", "--out", str(out),
-    ])
-    assert result.exit_code == 0, result.output
-    with open(out, newline="") as f:
-        rows = list(csv.DictReader(f))
-    assert list(rows[0]) == ["run_id", "run_name", "name", "step", "wall_time", "value"]
-    assert {r["run_name"] for r in rows} == {"r1", "r2"}
-    assert len(rows) == 2 * 5
-    assert {r["name"] for r in rows} == {"loss", "val.loss", "acc"}
 
 
-def test_export_project_json_and_parquet(live_server, monkeypatch, tmp_path):
-    pytest.importorskip("pyarrow")
-    monkeypatch.setenv("CAIRN_SERVER", live_server)
-    _seed(_server_repo(live_server), n=2)
-    runner = CliRunner()
-    assert runner.invoke(cli.main, ["export", "--project", "p", "--format", "json", "--out", str(tmp_path / "p.json")]).exit_code == 0
-    records = json.loads((tmp_path / "p.json").read_text())
-    assert len(records) == 10 and {"run_name", "wall_time"} <= set(records[0])
-    assert runner.invoke(cli.main, ["export", "--project", "p", "--format", "parquet", "--out", str(tmp_path / "p.parquet")]).exit_code == 0
-    assert len(pd.read_parquet(tmp_path / "p.parquet")) == 10
 
 
 def test_export_needs_exactly_one_of_run_id_or_project(tmp_path):

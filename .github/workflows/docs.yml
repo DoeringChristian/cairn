@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: astral-sh/setup-uv@v5
       # Only the docs extra: mkdocstrings reads the sources statically, and
       # mkdocs-click imports cairn.cli, which needs the base install only.

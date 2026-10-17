@@ -2,7 +2,7 @@
 
 Export bundles run metadata, params, summary, sequences, artifacts, logs, and
 source code into a single ZIP that can be imported into another Cairn
-instance. The archive format lives in ``cairn.server.run_archive``.
+instance. The archive format lives in ``cairn.backend.run_archive``.
 """
 
 from __future__ import annotations
@@ -16,8 +16,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..run_archive import restore_archive, write_archive
-from ._common import get_blobs, get_data_dir, get_db, slugify, utc_now
+from cairn.backend.run_archive import restore_archive, write_archive
+from cairn.server.routes._common import get_blobs, get_data_dir, get_db
+from cairn.backend.common import slugify, utc_now
 
 router = APIRouter(prefix="/api", tags=["import-export"])
 
@@ -39,6 +40,8 @@ def export_runs(body: ExportRequest, request: Request) -> StreamingResponse:
             )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     buf.seek(0)
     timestamp = utc_now().strftime("%Y%m%d_%H%M%S")
@@ -70,12 +73,13 @@ async def import_runs(
         zf = zipfile.ZipFile(io.BytesIO(content))
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file") from None
-    try:
-        imported = await run_in_threadpool(  # long and blocking: off the event loop
-            restore_archive,
-            get_db(request), get_blobs(request), get_data_dir(request), zf, keep_ids=keep_ids,
-            project=project,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+    with zf:
+        try:
+            imported = await run_in_threadpool(  # long and blocking: off the event loop
+                restore_archive,
+                get_db(request), get_blobs(request), get_data_dir(request), zf, keep_ids=keep_ids,
+                project=project,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"imported": imported}

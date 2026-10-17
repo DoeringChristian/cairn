@@ -12,9 +12,9 @@ import pytest
 from PIL import Image as PILImage
 
 import cairn
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 
 @pytest.fixture(autouse=True)
@@ -108,23 +108,14 @@ def test_local_runs_one_after_another(tmp_path):
         pass
 
 
-def test_second_run_while_first_active_raises(tmp_path):
-    repo = tmp_path / ".cairn"
-    run1 = cairn.Run(
-        project="x", repo=repo,
-        capture_source=False, capture_stdout=False,
-        capture_env=False, capture_system_metrics=False,
-    )
-    try:
-        # The nested-run guard (one active run per process).
-        with pytest.raises(RuntimeError, match="Nested"):
-            cairn.Run(
-                project="x", repo=repo,
-                capture_source=False, capture_stdout=False,
-                capture_env=False, capture_system_metrics=False,
-            )
-    finally:
-        run1.finish()
+def test_independent_explicit_runs_are_supported(tmp_path):
+    repo = tmp_path / '.cairn'
+    kwargs = dict(capture_source=False, capture_stdout=False, capture_env=False,
+                  capture_system_metrics=False, repo=repo)
+    with cairn.Run("p", **kwargs) as first, cairn.Run("p", **kwargs) as second:
+        first.log({"loss": 1.0})
+        second.log({"loss": 2.0})
+        assert first.id != second.id
 
 
 def test_auto_finish_on_interpreter_exit(tmp_path):

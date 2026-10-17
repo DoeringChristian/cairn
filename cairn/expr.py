@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable
 
-from .server._operators import OPERATORS
+from cairn.backend._operators import OPERATORS
 
 __all__ = [
     "AXES", "ExprError", "ExprType", "ExprWarning", "EvalResult", "FUNCTION_NAMES", "MISSING",

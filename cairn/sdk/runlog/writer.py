@@ -52,7 +52,7 @@ class RunWriter:
 
     def __init__(
         self, run_dir: RunDir, run_id: str, log_key: str | None = None, *,
-        log_name: str | None = None,
+        log_name: str | None = None, local_repo: str | None = None,
     ) -> None:
         self.run_dir = run_dir
         self.run_id = run_id
@@ -67,6 +67,19 @@ class RunWriter:
             # Named under the log's lock, before its first record.
             self.ref.set_name(log_name)
         self._closed = False
+        self._local_client = None
+        self._local_sync = None
+        if local_repo is not None:
+            from ...uploader.local import LocalIngestClient
+            from ...uploader.sync import LogSync
+            try:
+                self._local_client = LocalIngestClient(local_repo)
+            except BaseException:
+                self.log.close()
+                raise
+            self._local_sync = LogSync(self.ref)
+            self._ingest_lock = threading.Lock()
+            self.log._on_commit = lambda seq: self._ingest_local()
 
     # ---- plumbing ------------------------------------------------------------
 
@@ -89,12 +102,35 @@ class RunWriter:
 
     def flush(self) -> int:
         """Make everything written so far durable now; returns the last seq."""
-        return self.log.flush()
+        seq = self.log.flush()
+        self._ingest_local()
+        return seq
+
+    def _ingest_local(self):
+        if self._local_client is None:
+            return
+        from ...uploader.client import UploadPending
+        with self._ingest_lock:
+            try:
+                while self._local_sync.step(self._local_client, self.run_id):
+                    pass
+            except UploadPending:
+                # Workers can finish before their primary starts. Their durable
+                # journal is recovered when a Reader opens the repo.
+                return
 
     def close(self) -> None:
         if not self._closed:
             self._closed = True
-            self.log.close()
+            try:
+                self.log.close()
+                self._ingest_local()
+                from .rundir import write_atomic
+                import json
+                write_atomic(self.ref.owner / 'SEALED', json.dumps({'seq': self.log.durable_seq}).encode())
+            finally:
+                if self._local_client is not None:
+                    self._local_client.close()
 
     @property
     def last_seq(self) -> int:
@@ -199,7 +235,7 @@ class RunWriter:
                 against versions logged elsewhere, the server checks the
                 type and drops a mismatch).
         """
-        from ...server import artifact_registry_ops as rules
+        from cairn.backend import artifact_registry_ops as rules
 
         rules.validate_name(body["name"])
         for alias in body.get("aliases") or []:
@@ -228,6 +264,8 @@ class RunWriter:
 
         Gives up early when no uploader runs, or when the uploader reported a
         failed attempt after this call started (an unreachable server)."""
+        if self._local_sync is not None:
+            return max(0, self.log.durable_seq - self.ref.acked())
         from ...uploader import daemon as agent
 
         target = self.log.durable_seq

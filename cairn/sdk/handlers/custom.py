@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 
-from ...server.viewer_manifest import validate_kind
+from cairn.backend.viewer_manifest import validate_kind
 from ._optional import try_import
 
 MAX_BYTES = 128 * 1024 * 1024

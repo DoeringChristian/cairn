@@ -7,14 +7,15 @@ from cairn.sdk.transport import Transport
 from cairn.server.registration import read_info
 
 
-def test_local_repo_is_reached_through_its_server(tmp_path):
-    repo = tmp_path / ".cairn"
+def test_local_repo_uses_direct_storage(tmp_path):
+    from cairn.backend.repository import Repository
+    repo = tmp_path / '.cairn'
     t, url = open_writer(repo)
     try:
-        assert isinstance(t, Transport)
-        info = read_info(repo.resolve())
-        assert info is not None and url == info["url"]
-        assert t.get("/api/health").status_code == 200
+        assert isinstance(t, Repository)
+        assert url == repo.resolve().as_uri()
+        assert read_info(repo.resolve()) is None
+        assert t._db.read_one('SELECT 1') == (1,)
     finally:
         t.close()
 

@@ -22,7 +22,7 @@ import pytest
 
 import cairn
 import cairn.ui as cui
-from cairn.server.run_sets import run_set_of_ids
+from cairn.backend.run_sets import run_set_of_ids
 from cairn_ui.cards.spec import CardSpec, CardsSpec, RunSetSpec
 from cairn_ui.cards.elements import CardElement
 from cairn.sdk.reader import Reader
@@ -221,7 +221,7 @@ def test_resolve_server_prefers_advertised_servers_json_over_default(
     its repo's `servers.json`, without needing `server=`/`CAIRN_REPO`."""
     from urllib.parse import urlsplit
 
-    from cairn.server.storage.datadir import DataDir
+    from cairn.backend.storage.datadir import DataDir
 
     parts = urlsplit(live_server)
     repo = tmp_path / ".cairn"
@@ -241,7 +241,7 @@ def test_resolve_server_prefers_advertised_servers_json_over_default(
 def test_resolve_server_ignores_stale_advertised_entry(tmp_path, monkeypatch):
     """A dead pid's advertisement is PRUNED — its port is never even probed,
     and (with nothing else reachable) discovery returns None."""
-    from cairn.server.storage.datadir import DataDir
+    from cairn.backend.storage.datadir import DataDir
 
     repo = tmp_path / ".cairn"
     dd = DataDir(repo)
@@ -270,7 +270,7 @@ def test_compare_builder_threads_repo_path_and_autodiscovers_live_server(two_run
     advertised there — the real notebook-usage path this fix targets."""
     from urllib.parse import urlsplit
 
-    from cairn.server.storage.datadir import DataDir
+    from cairn.backend.storage.datadir import DataDir
 
     _reader, run_a, _run_b = two_runs
     repo_path = run_a._backend.repo_path

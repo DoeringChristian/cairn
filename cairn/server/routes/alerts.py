@@ -6,7 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ._common import get_db, parse_timestamp
+from cairn.server.routes._common import get_db
+from cairn.backend.common import parse_timestamp
 
 router = APIRouter(prefix="/api", tags=["alerts"])
 

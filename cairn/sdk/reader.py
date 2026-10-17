@@ -1,9 +1,7 @@
 """Python API for reading Cairn data, plus ``Run.edit`` for editing runs.
 
-Reads over HTTP from a server: one named by URL, or the server of a local
-``.cairn/`` repo (started in the background when none serves it; see
-``cairn.endpoint``). Auto-detects from config resolution. An exported
-``.zip`` archive can be read too (through a temporary server of its own).
+Reads a filesystem repo directly, or a remote server over HTTP. Exported ZIP
+archives are restored into a temporary local repo. Nothing starts a tracking server.
 
 Usage:
 
@@ -27,7 +25,7 @@ from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 from .. import config as _config
 from .. import expr as _expr
-from ..server import config_doc as _config_doc
+from cairn.backend import config_doc as _config_doc
 from .artifacts import ArtifactFamily, ArtifactVersion
 from .gallery import GALLERY_MIME
 
@@ -72,8 +70,8 @@ class Report:
         id: Report id (the last part of its URL, ``/p/<project>/reports/<id>``).
         project: The id of its project.
         name: Display name.
-        updated_at: Last change, as an ISO 8601 string. ``cairn report push``
-            compares it to refuse overwriting someone else's edit.
+        updated_at: Last publication time, as an ISO 8601 string.
+        version_id: Immutable currently published build version.
         source: The markdown source (None in ``Reader.reports`` listings;
             ``Reader.report`` fills it).
     """
@@ -83,6 +81,7 @@ class Report:
     name: str
     updated_at: str
     source: str | None = None
+    version_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -640,6 +639,18 @@ class Run:
 
     # ---- Sequences ----
 
+    def records(self, *, limit=100, cursor=0, where=None):
+        """Read complete structured entries, including arbitrary metadata/media."""
+        return self._backend.record_query(self.id, 'records', limit=limit, cursor=cursor, where=where)
+
+    def record_fields(self):
+        """Discover field paths and observed types in a bounded record sample."""
+        return self._backend.record_query(self.id, 'record-fields')
+
+    def record_series(self, key, *, x="step", where=None, max_points=1200):
+        """Plot any numeric fields; default x uses step or observation order."""
+        return self._backend.record_query(self.id, 'record-series', key=key, x=x, where=where, max_points=max_points)
+
     def history(self, keys: list[str] | None = None) -> Any:
         """Scalar history as a wide pandas DataFrame.
 
@@ -934,11 +945,9 @@ class Run:
 class RunEditor:
     """Write access to one existing run, from ``Run.edit``.
 
-    Writes go to the repo's ingest-lease holder: the server that serves the
-    repo, or this process under the lease (or the ``cairn://`` server the
-    Reader reads). Each call writes immediately. The ``Run``
-    it came from sees the edits. Use it as a context manager, or call
-    ``close`` when done.
+    Each edit checks the revision captured when this editor was opened.
+    Concurrent changes fail instead of silently overwriting another editor.
+    Writes use the same domain operation locally and through HTTP.
 
     Args:
         run: The run to edit.
@@ -950,6 +959,13 @@ class RunEditor:
 
         self._run = run
         self._transport, _ = open_writer(target)
+        self._revision = self._transport.read_run_edit(run.id)['revision']
+
+    def _edit(self, changes, delete=None):
+        result = self._transport.edit_run(self._run.id, expected_revision=self._revision,
+                                          changes=changes, delete=delete)
+        self._revision = result['revision']
+        return result
 
     def set_config(self, *args: Any, **kwargs: Any) -> None:
         """Merge keys into the run's config (like ``cairn.Run.config``).
@@ -966,7 +982,7 @@ class RunEditor:
         values = _merge_mappings("set_config", args, kwargs)
         if values:
             values = self._checked("config", values)
-            self._transport.post_params(self._run.id, values)
+            self._edit({'config': values})
             self._run._docs = None
 
     def set_summary(self, *args: Any, **kwargs: Any) -> None:
@@ -994,13 +1010,13 @@ class RunEditor:
                 check_summary_names(names, self._run._backend.list_sequences(self._run.id))
                 values = upload_media(self._transport, default_registry, values)
             values = self._checked("summary", values)
-            self._transport.post_summary(self._run.id, values)
+            self._edit({'summary': values})
             self._run._docs = None
             self._run._raw.pop("values", None)
 
     def _checked(self, kind: str, values: dict[str, Any]) -> dict[str, Any]:
         """``values`` validated, and its merge into the stored document
-        checked, before anything is sent (``cairn.server.config_doc``)."""
+        checked, before anything is sent (``cairn.backend.config_doc``)."""
         values = _config_doc.normalize(values, what=kind)
         current = self._run.config if kind == "config" else self._run._doc("summary")
         _config_doc.nodes(_config_doc.merge(current, values))
@@ -1020,7 +1036,7 @@ class RunEditor:
         tables = {"config": "params", "summary": "summary"}
         if which not in tables:
             raise ValueError(f"which must be 'config' or 'summary', got {which!r}")
-        self._transport.delete_keys(self._run.id, tables[which], list(keys))
+        self._edit({}, delete={which: list(keys)})
         self._run._docs = None
         self._run._raw.pop("values", None)
 
@@ -1030,7 +1046,7 @@ class RunEditor:
         Args:
             tags: The new tags.
         """
-        self._transport.set_tags(self._run.id, list(tags))
+        self._edit({'tags': list(tags)})
         self._run._raw["tags"] = json.dumps(list(tags))
 
     def add_tag(self, tag: str) -> None:
@@ -1057,7 +1073,7 @@ class RunEditor:
         Args:
             name: The new name.
         """
-        resp = self._transport.rename_run(self._run.id, name)
+        resp = self._edit({'display_name': name})
         self._run._raw["display_name"] = name
         self._run._raw["version"] = resp.get("version")
 
@@ -1067,7 +1083,7 @@ class RunEditor:
         Args:
             notes: The new notes.
         """
-        self._transport.set_notes(self._run.id, notes)
+        self._edit({'notes': notes})
         self._run._raw["notes"] = notes
 
     def close(self) -> None:
@@ -1357,7 +1373,7 @@ class RunQuery:
         Raises:
             ValueError: An unknown key.
         """
-        from ..server.run_query import validate_sort_key
+        from cairn.backend.run_query import validate_sort_key
 
         return self._clone(sort_key=validate_sort_key(key), sort_desc=desc)
 
@@ -1613,9 +1629,9 @@ class _RegistryWrites:
     def remove_version_tag(self, version_id: str, tag: str) -> dict[str, Any]:
         return _edit(self, "remove_artifact_tag", version_id, tag)
 
-    def update_version(self, version_id: str, *, description: str | None = None,
+    def update_version(self, version_id: str, *, expected_revision: int, description: str | None = None,
                        metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {}
+        body: dict[str, Any] = {'expected_revision':expected_revision}
         if description is not None:
             body["description"] = description
         if metadata is not None:
@@ -1650,6 +1666,262 @@ def _resolve_cache_dir(explicit: Path | None) -> Path:
     from ..config import cache_dir
 
     return cache_dir() / "reader" / "blobs"
+
+
+class _LocalBackend(_RegistryWrites):
+    """Read the local database directly, with the same query evaluator as HTTP."""
+
+    def __init__(self, repo: str | Path, *, zip_source: str | None = None) -> None:
+        from cairn.backend.storage.context import StorageConfig
+        self._storage_config = repo if isinstance(repo, StorageConfig) else None
+        if self._storage_config is not None:
+            self._db_obj, self._blobs, self._dd = repo.open()
+            self._zip_source = None
+            return
+        from cairn.backend.storage.blobs import BlobStore
+        from cairn.backend.storage.datadir import DataDir
+
+        self._dd = DataDir(Path(repo))
+        self._blobs = BlobStore(self._dd.artifacts_dir)
+        self._zip_source = zip_source
+        self._db_obj: Any = None
+
+
+    @property
+    def _db(self) -> Any:
+        if self._db_obj is None:
+            self._open_database()
+        return self._db_obj
+
+    @property
+    def edit_target(self) -> str:
+        """Where edits go: the local repo, through the direct writer."""
+        if self._zip_source is not None:
+            raise ValueError(f"runs read from an exported archive ({self._zip_source}) can't be edited")
+        return self._storage_config or str(self._dd.root)
+
+    @property
+    def repo_path(self) -> str:
+        """The ``.cairn/`` dir this backend reads — lets the `cairn.ui`
+        card builders thread the actual repo dir to `CardElement` for
+        local server auto-discovery (`servers.json`), rather than relying
+        on global `cairn.configure`/`CAIRN_REPO` state."""
+        return str(self._dd.root)
+
+    def _open_database(self) -> None:
+        if self._db_obj is None:
+            from cairn.backend.startup import open_repo_database
+            self._db_obj = open_repo_database(self._dd, self._blobs)
+            if self._zip_source is None:
+                from ..uploader.local import recover_journals
+                recover_journals(self._dd, self._db_obj, self._blobs)
+
+    @property
+    def server_url(self):
+        return None
+
+    def list_reports(self, project=None):
+        from cairn.backend.reports import list_page
+        rows=[]
+        while True:
+            page=list_page(self._db,project,limit=1000,offset=len(rows))
+            rows.extend(page['reports'])
+            if not page['reports'] or len(rows)>=page['total']:
+                return rows
+
+    def get_report(self, report_id):
+        from cairn.backend.reports import read
+        return read(self._db,report_id)
+
+    def artifact_version(self, version_id: str) -> dict[str, Any] | None:
+        """The version with this id, or None while it is not ingested yet."""
+        from cairn.backend import artifact_registry_ops
+
+        self._open_database()
+        try:
+            return artifact_registry_ops.get_version(self._db, version_id)
+        except LookupError:
+            return None
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        self._open_database()
+        return self._db.read_columns(
+            """SELECT p.id, p.name, p.created_at,
+                      (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id) AS run_count,
+                      (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id AND r.status = 'running') AS active_run_count,
+                      (SELECT MAX(COALESCE(r.ended_at, r.created_at)) FROM runs r WHERE r.project_id = p.id) AS last_run_at
+               FROM projects p ORDER BY last_run_at DESC"""
+        )
+
+    def query_runs(self, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+        """The shared evaluator, in-process (``run_query.select_runs``)."""
+        from cairn.backend.run_query import select_runs
+
+        self._open_database()
+        return select_runs(self._db, spec)
+
+    def get_run(self, run_id):
+        from cairn.backend.run_reads import run_details
+        result = run_details(self._db, [run_id])
+        if run_id not in result:
+            raise KeyError(f'Run {run_id!r} not found')
+        return result[run_id]
+
+    def capture_run(self, run_id, revision=None):
+        from cairn.backend.snapshots import capture_run
+        return capture_run(self._db, run_id, revision)
+
+    def record_query(self, run_id, operation, **kwargs):
+        from cairn.backend import records
+        function = {'records': records.page, 'record-fields': records.fields, 'record-series': records.series}[operation]
+        return function(self._db, run_id, **kwargs)
+
+    def get_docs(self, run_id: str) -> dict[str, Any]:
+        """``{"config": doc, "summary": doc}`` exactly as stored."""
+        from cairn.backend.ingest_ops import run_docs
+
+        self._open_database()
+        return run_docs(self._db, run_id)
+
+    def list_sequences(self, run_id: str) -> list[dict[str, Any]]:
+        return self._db.read_columns(
+            """SELECT name, MAX(object_type) AS object_type,
+                      MIN(step) AS min_step, MAX(step) AS max_step, COUNT(*) AS count,
+                      MAX(summary) AS summary
+               FROM sequences WHERE run_id = ?
+               GROUP BY name
+               ORDER BY name""",
+            [run_id],
+        )
+
+    def get_sequence(
+        self, run_id: str, name: str, *,
+        step_from: int | None = None, step_to: int | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["s.run_id = ?", "s.name = ?"]
+        params: list[Any] = [run_id, name]
+        if step_from is not None:
+            clauses.append("s.step >= ?")
+            params.append(step_from)
+        if step_to is not None:
+            clauses.append("s.step <= ?")
+            params.append(step_to)
+        where = " AND ".join(clauses)
+        rows = self._db.read_columns(
+            f"""SELECT s.step, s.wall_time, s.scalar_value, s.artifact_hash,
+                       s.object_type, s.metadata,
+                       a.mime_type AS artifact_mime, a.size_bytes AS artifact_size,
+                       a.metadata AS artifact_metadata
+                FROM sequences s
+                LEFT JOIN artifacts a ON a.hash = s.artifact_hash
+                WHERE {where} ORDER BY s.step""",
+            params,
+        )
+        # Simple downsampling if requested.
+        return rows
+
+    def scalar_series(self, run_ids: list[str], names: list[str] | None) -> list[dict[str, Any]]:
+        from cairn.backend.series import scalar_series
+
+        return scalar_series(self._db, run_ids, names)
+
+    def get_artifact_bytes(self, digest: str) -> bytes:
+        data = self._blobs.get(digest)
+        return data
+
+    def get_logs(
+        self, run_id: str, *, stream: str | None = None,
+        search: str | None = None, limit: int = 10_000, offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if stream:
+            clauses.append("stream = ?")
+            params.append(stream)
+        if search:
+            clauses.append("content LIKE ?")
+            params.append(f"%{search}%")
+        where = " AND ".join(clauses)
+        rows = self._db.read_columns(
+            f"SELECT stream, wall_time, line_no, content, label FROM log_lines WHERE {where} ORDER BY wall_time, label, line_no LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        )
+        (total,) = self._db.read_one(f"SELECT COUNT(*) FROM log_lines WHERE {where}", params) or (0,)
+        return rows, total
+
+    def get_source_tree(self, run_id: str) -> dict[str, Any] | None:
+        from cairn.backend import sources
+        self._open_database()
+        try:
+            return sources.get(self._db, run_id)[1]
+        except LookupError:
+            return None
+
+    def get_source_file(self, run_id: str, path: str) -> str | None:
+        from cairn.backend import sources
+        self._open_database()
+        try:
+            data = sources.file(self._db, self._blobs, run_id, path)
+            return data.decode('utf-8', errors='replace') if data is not None else None
+        except LookupError:
+            return None
+
+    # ---- Artifact registry ----
+
+    def _ops(self) -> Any:
+        from cairn.backend import artifact_registry_ops
+
+        self._open_database()
+        return artifact_registry_ops
+
+    def list_artifact_families(self, project_id: str, type_filter: str | None = None) -> list[dict[str, Any]]:
+        return self._ops().list_families(self._db, project_id, type_filter=type_filter)
+
+    def family_versions(self, project_id: str, name: str) -> list[dict[str, Any]]:
+        ops = self._ops()
+        fam = ops.get_family_by_name(self._db, project_id, name)
+        if fam is None:
+            raise LookupError(f"no artifact {name!r} in project {project_id!r}")
+        return ops.list_versions(self._db, fam["id"])
+
+    def resolve_artifact_ref(self, project_id: str | None, ref: str) -> dict[str, Any]:
+        return self._ops().resolve_ref(self._db, project_id, ref)
+
+    def version_files(self, version_id: str) -> list[dict[str, Any]]:
+        return self._ops().version_files(self._db, version_id)
+
+    def version_consumers(self, version_id: str) -> list[dict[str, Any]]:
+        return self._ops().version_consumers(self._db, version_id)
+
+    def run_inputs(self, run_id: str, role: str | None = None) -> list[dict[str, Any]]:
+        return self._ops().run_inputs(self._db, run_id, role)
+
+    def run_outputs(self, run_id: str) -> list[dict[str, Any]]:
+        return self._ops().run_outputs(self._db, run_id)
+
+    def run_uses(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        self._open_database()
+        return self._ops().run_uses(self._db, run_id)
+
+    def get_lineage(self, project_id: str, family_id: str | None = None) -> dict[str, Any]:
+        return self._ops().project_lineage(self._db, project_id, family_id=family_id)
+
+    def metric_rules(self, project_id: str) -> dict[str, Any]:
+        from cairn.backend.metric_rules import rules_document
+
+        return rules_document(self._db, project_id)
+
+    def version_lineage(
+        self, version_id: str, *, depth: int | None = None, direction: str = "both",
+    ) -> dict[str, Any]:
+        return self._ops().lineage_graph(
+            self._db, version_id=version_id, depth=depth, direction=direction,
+        )
+
+    def close(self) -> None:
+        if self._db_obj is not None:
+            self._db_obj.close()
+            self._db_obj = None
 
 
 class _HttpBackend(_RegistryWrites):
@@ -1755,6 +2027,15 @@ class _HttpBackend(_RegistryWrites):
             self._client.post("/api/server/shutdown", timeout=5.0)
         except httpx.HTTPError:
             pass
+
+    def capture_run(self, run_id, revision=None):
+        return self._get(f'/api/runs/{run_id}/snapshot', params={'revision': revision} if revision else {})
+
+    def record_query(self, run_id, operation, **kwargs):
+        params = {key: json.dumps(value) if key == 'where' else value for key, value in kwargs.items() if value is not None}
+        if operation == 'record-series' and 'x' in kwargs and kwargs['x'] is None:
+            params['x'] = ''
+        return self._get(f'/api/runs/{run_id}/{operation}', params=params)
 
     def get_docs(self, run_id: str) -> dict[str, Any]:
         """``{"config": doc, "summary": doc}`` exactly as stored (NaN/inf kept)."""
@@ -1909,73 +2190,42 @@ class _HttpBackend(_RegistryWrites):
 
 def _project_id(project: str) -> str:
     """A project name as its id (the normalisation ``cairn.Run`` applies)."""
-    from ..server.routes._common import slugify
+    from cairn.backend.common import slugify
 
     return slugify(project)
 
 
-def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Any]:
-    """Load an exported Cairn ZIP into a fresh temp repo, served by a daemon
-    server of its own (no client opens a database).
+def _load_zip_to_tempdir(zip_path: Path) -> tuple[Path, Path]:
+    """Load an exported Cairn ZIP into a fresh tempdir-backed .cairn/ repo.
 
-    Returns ``(tempdir, endpoint)``. The caller stops that server and removes
-    ``tempdir`` (``Reader.close``). Run ids are preserved: the repo is fresh,
-    so there is nothing to collide with.
+    Returns ``(tempdir, repo_path)``. Caller is responsible for cleaning up
+    ``tempdir`` (Reader does this on ``close()``). Run ids are preserved: the
+    repo is fresh, so there is nothing to collide with.
     """
-    import shutil as _shutil
     import tempfile as _tempfile
     import zipfile as _zipfile
 
-    from ..endpoint import local_endpoint
-    from ..server.storage.datadir import DataDir as _DataDir
+    from cairn.backend.run_archive import restore_archive
+    from cairn.backend.storage.blobs import BlobStore as _BlobStore
+    from cairn.backend.storage.datadir import DataDir as _DataDir
+    from cairn.backend.storage.db import Database as _Database
 
     if not zip_path.exists():
         raise FileNotFoundError(f"Cairn ZIP archive not found: {zip_path}")
-    try:
-        with _zipfile.ZipFile(zip_path) as zf:
-            if "manifest.json" not in zf.namelist():
-                raise ValueError(f"Invalid Cairn ZIP archive (no manifest.json): {zip_path}")
-    except _zipfile.BadZipFile as exc:
-        raise ValueError(f"Invalid Cairn ZIP archive: {zip_path}") from exc
 
     tempdir = Path(_tempfile.mkdtemp(prefix="cairn_zip_reader_"))
     repo_path = tempdir / ".cairn"
-    _DataDir(repo_path)
+    dd = _DataDir(repo_path)
+    db = _Database.open(dd.db_path)
     try:
-        endpoint = local_endpoint(repo_path)
-        with endpoint.client(timeout=600.0) as client, zip_path.open("rb") as fh:
-            resp = client.post(
-                "/api/import", params={"keep_ids": "true"},
-                files={"file": (zip_path.name, fh, "application/zip")},
-            )
-        if resp.status_code == 400:
-            raise ValueError(f"Invalid Cairn ZIP archive: {resp.json().get('detail')}")
-        resp.raise_for_status()
-    except BaseException:
-        _stop_archive_server(repo_path)
-        _shutil.rmtree(tempdir, ignore_errors=True)
-        raise
-    return tempdir, endpoint
-
-
-def _stop_archive_server(repo_path: Path, timeout: float = 10.0) -> None:
-    """Stop the daemon server of an archive's temp repo; wait for it to go."""
-    import time as _time
-
-    from ..endpoint import live_server
-    from ..server.registration import read_info
-
-    ep = live_server(repo_path)
-    if ep is None:
-        return
-    with ep.client(timeout=5.0) as client:
-        try:
-            client.post("/api/server/shutdown")
-        except Exception:  # noqa: BLE001 - it may be gone already
-            return
-    deadline = _time.monotonic() + timeout
-    while _time.monotonic() < deadline and read_info(repo_path) is not None:
-        _time.sleep(0.05)
+        with _zipfile.ZipFile(zip_path) as zf:
+            try:
+                restore_archive(db, _BlobStore(dd.artifacts_dir), dd, zf, keep_ids=True)
+            except ValueError as e:
+                raise ValueError(f"Invalid Cairn ZIP archive (no manifest.json): {zip_path}") from e
+    finally:
+        db.close()
+    return tempdir, repo_path
 
 
 # ---------------------------------------------------------------------------
@@ -2021,30 +2271,26 @@ class Reader:
         cache: bool = True,
         cache_dir: str | Path | None = None,
     ) -> None:
-        # ZIP file: ``cairn.Reader(repo="run.zip")`` — load an exported archive
-        # into a temp repo served by its own server, and read from there.
+        # ZIP archives are private temporary local repos.
         self._tempdir: Path | None = None
         self._zip_source: str | None = None
-        if repo is not None and str(repo).endswith(".zip"):
-            self._tempdir, endpoint = _load_zip_to_tempdir(Path(repo))
-            self._zip_source = str(repo)
-            self._backend = _HttpBackend(
-                endpoint.url, cache=False, token=endpoint.token, archive=self._zip_source,
-            )
+        from cairn.backend.storage.context import StorageConfig
+        if isinstance(repo, StorageConfig):
+            self._backend = _LocalBackend(repo)
             return
-        from ..endpoint import EndpointUnavailable, resolve_endpoint
-
-        try:
-            endpoint = resolve_endpoint(repo=repo)
-        except EndpointUnavailable as exc:
-            raise RuntimeError(str(exc)) from None
-        self._backend = _HttpBackend(
-            endpoint.url,
-            cache=cache,
-            cache_dir=Path(cache_dir) if cache_dir else None,
-            token=endpoint.token,
-            repo_path=endpoint.repo,
-        )
+        if repo is not None and str(repo).endswith(".zip"):
+            self._tempdir, repo_path = _load_zip_to_tempdir(Path(repo))
+            self._zip_source = str(repo)
+            self._backend = _LocalBackend(repo_path, zip_source=self._zip_source)
+            return
+        target = _config.resolve_target(repo=repo)
+        if target.is_local:
+            self._backend = _LocalBackend(target.location)
+        else:
+            self._backend = _HttpBackend(
+                target.location, cache=cache,
+                cache_dir=Path(cache_dir) if cache_dir else None,
+            )
 
     def projects(self) -> list[Project]:
         """List all projects.
@@ -2068,7 +2314,7 @@ class Reader:
             project: Only this project's reports (name or id); default all.
         """
         return [Report(id=r["id"], project=r["project_id"], name=r["name"],
-                       updated_at=r["updated_at"])
+                       updated_at=r["updated_at"], version_id=r["version_id"])
                 for r in self._backend.list_reports(project)]
 
     def report(self, report_id: str) -> Report:
@@ -2087,7 +2333,7 @@ class Reader:
             raise
         return Report(id=r["id"], project=r["project_id"], name=r["name"],
                       updated_at=r["updated_at"],
-                      source=(r.get("payload") or {}).get("source") or "")
+                      source=(r.get("payload") or {}).get("source") or "", version_id=r["version_id"])
 
     def runs(self, project: str | None = None, *, archived: bool | None = False) -> RunQuery:
         """Start a lazy run query (see ``RunQuery`` for order and filters).
@@ -2189,12 +2435,11 @@ class Reader:
         return self._backend.get_lineage(project_id, family_id)
 
     def close(self) -> None:
-        """Close the HTTP connection (and an archive's temp repo and server)."""
+        """Close the backend and remove any temporary archive repo."""
         self._backend.close()
         if self._tempdir is not None:
             import shutil as _shutil
 
-            _stop_archive_server(self._tempdir / ".cairn")
             _shutil.rmtree(self._tempdir, ignore_errors=True)
             self._tempdir = None
 

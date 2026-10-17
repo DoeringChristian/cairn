@@ -1,7 +1,7 @@
 [project]
 name = "cairn-track"
-version = "0.6.0"
-description = "An open-source ML experiment tracker with a client/server architecture for easy cross-device use on a local network."
+version = "0.7.0"
+description = "Experiment tracking and executable research reports, with direct local storage or a remote server."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -37,10 +37,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+deployment = ["sqlalchemy>=2.0", "psycopg[binary]>=3.2", "boto3>=1.35"]
+reports = [
+    "nbformat>=5.10", "nbclient>=0.10", "ipykernel>=6.29", "packaging>=24",
+    "matplotlib>=3.7", "plotly>=5.18", "markdown-it-py>=3",
+    "mdit-py-plugins>=0.4", "latex2mathml>=3",
+]
+
 # The optional half.
 #
-#   [ui]   unlocks `cairn.ui` (cards and notebook embeds) AND the browser
-#          viewer itself.
+#   [ui]   unlocks `cairn.ui` (cards and notebook embeds). The browser
+#          bundle itself is included in the base package.
 #
 # Pinned to a git commit rather than a version range, because cairn-ui is not
 # on PyPI (nor is cairn-track). A range would send pip to an index that
@@ -51,7 +58,7 @@ dependencies = [
 # that they agree. Swap it back to a version range the day the package is
 # published.
 ui = [
-    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@2c26bc06e6df4939aaf37331204941378545560b",
+    "cairn-ui @ git+https://github.com/DoeringChristian/cairn-ui@736200ea5e4e5b09c2c1832b73946d5ebc8ffdc8",
 ]
 media = [
     "matplotlib>=3.7",
@@ -68,7 +75,7 @@ export = [
     "pandas>=2.0",
     "pyarrow>=14.0",
 ]
-# Framework integrations (cairn.integrations.*) and `cairn import-tb`.
+# Framework integrations and the Python TensorBoard importer.
 tb = [
     "tensorboard>=2.14",
 ]
@@ -103,8 +110,9 @@ dev = [
     # The viewer (and the export deps), so a dev checkout can exercise
     # everything they unlock. Via the extra, so the git pin lives in exactly
     # one place; [tool.uv.sources] below redirects it to the local checkout.
-    "cairn-track[ui,export,docs]",
+    "cairn-track[reports,ui,export,docs]",
     "pytest>=8.0",
+    "moto[s3]>=5.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
     "pytest-httpx>=0.30",
@@ -143,11 +151,8 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
-# `packages = ["cairn"]` ships EVERYTHING under cairn/ that is not ignored, not
-# just the .py files — which is how 87 .ts and 79 .tsx files used to ride along
-# beside the bundle. The viewer now lives in vendor/cairn-ui, so cairn/ holds
-# Python and nothing else; tests/unit/test_package_boundaries.py keeps it that
-# way. No build hook: there is nothing here to build.
+# Python and report templates live in cairn/. The matching prebuilt browser
+# runtime is added below through force-include; browser sources stay vendored.
 [tool.hatch.build.targets.wheel]
 packages = ["cairn"]
 
@@ -192,3 +197,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.:",
 ]
+
+# The viewer shipped with this tracker is built from the matching source checkout.
+[tool.hatch.build.targets.wheel.force-include]
+"vendor/cairn-ui/cairn_ui/_dist" = "cairn/_web"
+
+[tool.hatch.build.targets.sdist.force-include]
+"vendor/cairn-ui/cairn_ui/_dist" = "vendor/cairn-ui/cairn_ui/_dist"

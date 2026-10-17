@@ -13,7 +13,7 @@ def replay(run_dir: RunDir, log_name: str | None = None) -> dict[str, Any]:
     """``{project_id, tags, config, summary, status, sequences}`` as the
     records of ``run_dir``'s log say (``sequences``: ``[{name, max_step}]``
     over every log of the directory, for the per-name step counters)."""
-    from ...server import config_doc
+    from cairn.backend import config_doc
 
     state: dict[str, Any] = {
         "project_id": run_dir.meta().get("project_id"), "tags": [], "config": {},

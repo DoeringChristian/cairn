@@ -5,7 +5,7 @@ logged a run yet, start with [Getting started](../getting-started.md).
 
 ## Tracking
 
-- [Logging metrics](logging.md): `run.track`, steps and names, `config`, `summary`, tags and
+- [Logging metrics](logging.md): `cairn.log`, `run.track`, steps and names, `config`, `summary`, tags and
   notes.
 - [Media and rich types](media.md): images, galleries, overlays, audio, video, tables, figures,
   classifier charts, 3D data, and registering your own types.
@@ -23,12 +23,14 @@ logged a run yet, start with [Getting started](../getting-started.md).
 
 ## Beyond a single run
 
-- [Sweeps](sweeps.md): hyperparameter search with `cairn sweep` and `cairn agent`.
+- [Sweeps](sweeps.md): hyperparameter search with `cairn.sweep()` and `Sweep.run()`.
 - [Integrations](integrations.md): Hugging Face, Lightning, Keras and XGBoost callbacks.
 - [Reading data back](reading.md): `cairn.Reader`, queries and editing runs.
 - [Notebooks](notebooks.md): a run page, the project workspace or a report inline in Jupyter
   and marimo.
 - [Import and export](import-export.md): TensorBoard import, CSV/Parquet export, archives.
 - [Run directories, syncing and backup](run-directories.md): where runs write, the uploader,
-  working offline, `cairn sync`, `cairn backup`, `cairn fsck` and upgrading from 0.5.
+  working offline and delivering pending batches with `cairn sync`.
+- [Storage architecture and evolution](storage-architecture.md): backend contracts,
+  schema upgrades, repository moves and backups.
 - [Server, auth and deployment](server.md): `cairn server`, tokens and remote access.

@@ -1,4 +1,4 @@
-"""Unit tests for cairn.server.storage.datadir."""
+"""Unit tests for cairn.backend.storage.datadir."""
 
 from __future__ import annotations
 
@@ -7,12 +7,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from cairn.server.storage import datadir as datadir_mod
-from cairn.server.storage.datadir import (
-    DataDir,
-    default_data_dir,
-    read_live_servers,
-)
+from cairn.backend.storage import datadir as datadir_mod
+from cairn.backend.storage.datadir import DataDir, default_data_dir, read_live_servers
 
 
 def test_fresh_dir_creates_layout(tmp_path):

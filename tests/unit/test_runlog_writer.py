@@ -285,7 +285,7 @@ def test_signal_finishes_the_run_durably(tmp_path) -> None:
     p = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
     assert p.returncode == -15, p.stderr
     run_id = p.stdout.strip()
-    recs = scan(tmp_path / "cd" / "runs" / run_id / "log").records
+    recs = scan(tmp_path / "repo" / "runs" / run_id / "log").records
     points = [pt["step"] for r in recs if r["op"] == "batch" for pt in r["points"]]
     assert points == list(range(50))
     assert recs[-1]["op"] == "finish" and recs[-1]["status"] == "killed"
@@ -306,7 +306,7 @@ def _script_records(tmp_path, body: str) -> tuple[subprocess.CompletedProcess, l
            "CAIRN_SYNC_INTERVAL_MS": "60000"}
     p = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
     run_id = p.stdout.split()[0]
-    return p, scan(tmp_path / "cd" / "runs" / run_id / "log").records
+    return p, scan(tmp_path / "repo" / "runs" / run_id / "log").records
 
 
 def _points(recs: list[dict]) -> list[int]:

@@ -112,6 +112,8 @@ class Transport:
                 last_exc = exc
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 last_exc = exc
+            if attempt + 1 == self.max_retries:
+                break
             sleep_for = min(
                 self.backoff_cap, self.backoff_base * (2**attempt)
             ) + random.uniform(0, 1)
@@ -162,6 +164,30 @@ class Transport:
         return self._request("DELETE", path)
 
     # ---- high-level ops ----------------------------------------------------
+
+    def read_run_edit(self, run_id):
+        return self.get(f'/api/runs/{run_id}/edit').json()
+
+    def edit_run(self, run_id, *, expected_revision, changes, delete=None):
+        return self._request('PATCH', f'/api/runs/{run_id}/edit',
+                             json={'expected_revision': expected_revision, 'changes': changes,
+                                   'delete': delete}).json()
+
+    def list_viewers(self, project, all_versions=False):
+        from cairn.backend.common import slugify
+        response = self.get(f'/api/projects/{slugify(project)}/viewers', params={'all_versions': all_versions})
+        return response.json()['viewers']
+
+    def current_publication(self, project_id, slug):
+        response = self._client.get('/api/report-publications/current', params={'project_id': project_id, 'slug': slug})
+        response.raise_for_status()
+        return response.json()['version_id']
+
+    def publish_report(self, body):
+        return self.post_json('/api/report-publications', body).json()
+
+    def remove_report(self, report_id, *, expected_version):
+        return self._client.delete(f'/api/reports/{report_id}', params={'expected_version': expected_version}).raise_for_status().json()
 
     def create_run(self, body: dict[str, Any]) -> dict[str, Any]:
         """Create a run. Raises ValueError when its id is taken (409)."""
@@ -215,6 +241,14 @@ class Transport:
             f"/api/runs/{run_id}/metric-rules",
             {"name": name, "x": x, "summary": summary},
         )
+
+    def read_run(self, run_id):
+        try:
+            return self.get(f'/api/runs/{run_id}').json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
 
     def sequence_steps(self, run_id: str) -> list[dict[str, Any]]:
         """Each of the run's series as ``{name, max_step}``."""

@@ -576,7 +576,7 @@ class Data(_TypeWrapper):
     def __init__(
         self, obj: Any, *, kind: str, meta: dict[str, Any] | None = None, **kwargs: Any,
     ):
-        from ..server.viewer_manifest import validate_kind
+        from cairn.backend.viewer_manifest import validate_kind
 
         validate_kind(kind)
         if meta is not None and not isinstance(meta, dict):

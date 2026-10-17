@@ -22,8 +22,8 @@ temporary repo instead and print its path; open it with
 Some examples need extras or third-party packages. The **Needs** column lists
 them:
 
-- `[media]`: `pip install 'cairn-track[media]'` (matplotlib, plotly, …)
-- `[ui]`: `pip install 'cairn-track[ui]'` (the viewer; `cairn ui` always needs it)
+- `[media]`: `pip install 'cairn-track[media] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'` (matplotlib, plotly, …)
+- `[ui]`: `pip install 'cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'` (Python notebook cards; the browser bundle ships with Cairn)
 
 ## Organising runs
 
@@ -104,24 +104,23 @@ series and an `hparams` config each), then reads the runs back with
 | `multi_process.py` | `concurrent.futures.ProcessPoolExecutor`, 4 workers | — | One run per process |
 | `multiprocessing_pool.py` | `multiprocessing.Pool.starmap`, 4 workers | — | One run per process |
 | `multi_thread.py` | `threading.Thread`, 3 threads | — | A process can hold only one active run, so the threads run one after another |
-| `submitit_sweep.py` | submitit, with `cluster="local"` | `pip install submitit` | Change to `cluster="slurm"` and a shared repo path on a cluster |
+| `submitit_sweep.py` | submitit, with `cluster="local"` | `pip install submitit` | Change to `cluster="slurm"` and point workers at a Cairn server |
 | `ray_tune.py` | Ray Tune `grid_search` over learning rates | `pip install "ray[tune]"` | — |
-| `dask_sweep.py` | Dask `LocalCluster`; `--ssh host1 host2 …` for an `SSHCluster` | `pip install "dask[distributed]"` | SSH mode needs the repo on a filesystem shared by all hosts |
-| `fabric_remote.py` | Fabric over SSH; simulated locally by default, `--hosts gpu1 gpu2 …` for real hosts | `pip install fabric` | Real hosts need a shared filesystem, or a `cairn://` server |
-| `kubernetes_jobs.py` | Prints a worker `train.py` and a `jobs.yaml` with one Kubernetes Job per configuration, then simulates the jobs locally | — | The generated jobs read the repo from `CAIRN_REPO` on a shared volume |
+| `dask_sweep.py` | Dask `LocalCluster`; `--ssh host1 host2 …` for an `SSHCluster` | `pip install "dask[distributed]"` | SSH mode should use one Cairn server URL |
+| `fabric_remote.py` | Fabric over SSH; simulated locally by default, `--hosts gpu1 gpu2 …` for real hosts | `pip install fabric` | Point real hosts at one Cairn server URL |
+| `kubernetes_jobs.py` | Prints a worker `train.py` and a `jobs.yaml` with one Kubernetes Job per configuration, then simulates the jobs locally | — | Set `CAIRN_REPO` to a Cairn server URL in the generated jobs |
 
-Across machines, point every job at one repo: a shared directory (each run
-appends to its own log, so concurrent writers never contend for the
-database) or a `cairn://host:4300` server. See [Server, auth and
-deployment](guides/server.md#where-runs-are-written).
+Across machines, point every job at one Cairn server URL. Keep SQLite on the
+server's local disk. Local SDK processes open SQLite directly, so a shared
+network filesystem is not a substitute for a server. See
+[Storage architecture](guides/storage-architecture.md).
 
 ## Distributed runners
 
 These examples log every process of ONE job into one run
 ([Several processes, one run](guides/runs.md#several-processes-one-run)):
 rank 0 creates the run, the other ranks join it with a label. They log to
-the repo in `CAIRN_REPO`; the cloud ones log over HTTP to a server. The
-[runner table](guides/server.md#distributed-runners) compares them.
+the destination in `CAIRN_REPO`; jobs on several machines use a server URL.
 
 | Script | Launcher | Needs | Notes |
 |---|---|---|---|

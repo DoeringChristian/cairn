@@ -46,7 +46,7 @@ from typing import IO, Any, BinaryIO, Callable, Iterator, Literal
 log = logging.getLogger(__name__)
 
 #: Mime type of an artifact version's manifest blob. The server keeps its own
-#: copy (``cairn.server.artifact_refs``); a unit test pins the two together.
+#: copy (``cairn.backend.artifact_refs``); a unit test pins the two together.
 MANIFEST_MIME = "application/vnd.cairn.artifact-manifest+json"
 
 #: Environment variable naming the root that ``download()`` writes under by
@@ -888,7 +888,7 @@ class ArtifactVersion:
     def update(self, *, description: str | None = None, metadata: dict[str, Any] | None = None) -> None:
         """Replace the description and/or merge keys into the metadata. The
         entries are immutable; only these annotations change."""
-        self._info = self._backend.update_version(self.id, description=description, metadata=metadata)
+        self._info = self._backend.update_version(self.id, expected_revision=self._info.get('revision',0), description=description, metadata=metadata)
 
     def delete(self, *, force: bool = False) -> None:
         """Delete this version from the registry.

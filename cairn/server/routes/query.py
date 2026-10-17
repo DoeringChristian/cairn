@@ -9,7 +9,7 @@ The endpoint re-resolves on every request and is marked ``Cache-Control:
 no-store`` so a ``run=latest`` URL is always current on report open; the digest
 it points at is immutable and cached forever (see ``routes/artifacts.py``).
 
-Grammar and semantics live in ``cairn.server.query_resolver`` (pure,
+Grammar and semantics live in ``cairn.backend.query_resolver`` (pure,
 HTTP-free, unit-tested directly).
 """
 
@@ -20,12 +20,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from ..query_resolver import (
-    QueryError,
-    QueryNotFound,
-    parse_query_params,
-    resolve,
-)
+from cairn.backend.query_resolver import QueryError, QueryNotFound, parse_query_params, resolve
 from ._common import get_db
 
 router = APIRouter(prefix="/api", tags=["query"])

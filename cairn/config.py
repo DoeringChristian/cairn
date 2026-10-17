@@ -122,9 +122,15 @@ def configure(**kwargs: Any) -> None:
 
     Args:
         **kwargs: ``repo`` (a ``.cairn/`` path or ``cairn://host:port``),
-            ``server`` (a server URL; ``repo`` wins when both are set) and
+            ``server`` (a server URL, mutually exclusive with ``repo``) and
             ``mode`` (``"disabled"`` turns tracking off).
     """
+    if kwargs.get('repo') is not None and kwargs.get('server') is not None:
+        raise ValueError('choose a local repo or a remote server, not both')
+    if kwargs.get('repo') is not None:
+        _configured.pop('server', None)
+    elif kwargs.get('server') is not None:
+        _configured.pop('repo', None)
     _configured.update({k: v for k, v in kwargs.items() if v is not None})
 
 
@@ -281,27 +287,68 @@ def _normalized_or_none(url: str) -> str | None:
         return None
 
 
+def project_token_file() -> Path | None:
+    """Use one project boundary; a nested repo never inherits a parent token."""
+    directory = os.environ.get('CAIRN_DIR')
+    if directory:
+        return Path(directory).expanduser()/'token'
+    cwd = Path.cwd().resolve()
+    for parent in (cwd, *cwd.parents):
+        candidate = parent/'.cairn'
+        if candidate.is_dir():
+            return candidate/'token'
+    return None
+
+
+def user_token_file() -> Path:
+    root = os.environ.get('XDG_CONFIG_HOME')
+    return (Path(root).expanduser() if root else Path.home()/'.config')/'cairn'/'token'
+
+
+def _optional_token_file(path: Path | None) -> str | None:
+    from .credentials import read_token_file
+    if path is None:
+        return None
+    try:
+        return read_token_file(path)
+    except FileNotFoundError:
+        return None
+
+
 def resolve_token(server_url: str | None, explicit: str | None = None) -> str | None:
     """Resolve the Bearer token for the server at ``server_url``:
 
         1. explicit arg (e.g. ``Transport(..., token=...)``)
         2. ``CAIRN_TOKEN`` env var — applies to every server
-        3. the config file's ``[tokens]`` entry for ``server_url``
+        3. ``CAIRN_TOKEN_FILE`` credential file
+        4. the nearest project's .cairn/token (CAIRN_DIR overrides the directory)
+        5. the config file's ``[tokens]`` entry for ``server_url``
            (written by ``cairn login``), matched after
            ``normalize_server_url``
+        6. $XDG_CONFIG_HOME/cairn/token, else ~/.config/cairn/token
 
     Returns ``None`` (not an error) when no token is configured — auth-off
     servers work with no token at all.
     """
+    from .credentials import read_token_file, validate_token
     if explicit is not None:
-        return explicit
+        return validate_token(explicit)
     env = os.environ.get("CAIRN_TOKEN")
     if env:
-        return env
+        return validate_token(env)
+    token_file = os.environ.get("CAIRN_TOKEN_FILE")
+    if token_file:
+        return read_token_file(Path(token_file))
     if server_url is None:
         return None
+    project_token = _optional_token_file(project_token_file())
+    if project_token is not None:
+        return project_token
     key = _normalized_or_none(server_url)
-    return saved_tokens().get(key) if key is not None else None
+    saved = saved_tokens().get(key) if key is not None else None
+    if saved is not None:
+        return validate_token(saved)
+    return _optional_token_file(user_token_file())
 
 
 MODES = ("enabled", "disabled")
@@ -335,6 +382,8 @@ def resolve_target(
 
     Accepts ``cairn://host:port`` for HTTP server mode.
     """
+    if repo is not None and server is not None:
+        raise ValueError('choose a local repo or a remote server, not both')
     if repo is not None:
         return _parse_repo(str(repo))
     if server is not None:

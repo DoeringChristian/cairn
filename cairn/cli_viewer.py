@@ -66,7 +66,7 @@ def viewer_publish(
 ) -> None:
     """Publish FOLDER as a new version of its viewer (only if it changed)."""
     from .sdk.custom_viewers import publish_viewer
-    from .server.viewer_manifest import ManifestError
+    from cairn.backend.viewer_manifest import ManifestError
 
     try:
         version = publish_viewer(
@@ -103,15 +103,11 @@ def viewer_ls(project: str, all_versions: bool, repo: str | None) -> None:
 
 def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, Any]]:
     from .sdk.connect import open_writer
-    from .server.routes._common import slugify
+    from cairn.backend.common import slugify
 
     transport, _url = open_writer(repo)
     try:
-        resp = transport.get(
-            f"/api/projects/{slugify(project)}/viewers",
-            params={"all_versions": "1"} if all_versions else None,
-        )
-        return resp.json()["viewers"]
+        return transport.list_viewers(project, all_versions=all_versions)
     finally:
         transport.close()
 
@@ -124,17 +120,20 @@ def _list(project: str, all_versions: bool, repo: str | None) -> list[dict[str, 
 def viewer_dev(folder: Path, project: str, repo: str | None, interval: float) -> None:
     """Serve FOLDER live to a running server: every change reloads the viewer
     in open cards, on the target's server (write access; a local repo's
-    server is started when none serves it).
+    server must be started explicitly).
     The dev source disappears ~30 s after this stops. It is never part of a
     report or share link."""
     import httpx
 
     from .sdk.connect import open_writer
     from .sdk.custom_viewers import DevSync
-    from .server.routes._common import slugify
-    from .server.viewer_manifest import ManifestError
+    from cairn.backend.common import slugify
+    from cairn.backend.viewer_manifest import ManifestError
 
     transport, url = open_writer(repo)
+    if not url.startswith(("http://", "https://")):
+        transport.close()
+        raise click.ClickException("viewer dev requires an explicitly running HTTP server; use --server")
     token = getattr(transport, "token", None)
     transport.close()
     headers = {"Authorization": f"Bearer {token}"} if token else {}

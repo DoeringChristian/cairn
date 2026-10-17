@@ -16,10 +16,10 @@ import pytest
 import cairn
 from tests.conftest import ingest_repo
 from cairn.sdk import run_ids
-from cairn.sdk.run import _resolve_process
-from cairn.server import ingest_ops
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.sdk.run_support import _resolve_process
+from cairn.backend import ingest_ops
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}

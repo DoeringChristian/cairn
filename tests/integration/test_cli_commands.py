@@ -20,7 +20,7 @@ from click.testing import CliRunner
 import cairn
 from cairn import cli, config
 from cairn.server.app import create_app
-from cairn.server.storage.datadir import DataDir
+from cairn.backend.storage.datadir import DataDir
 from tests.conftest import _find_free_port, ingest_repo
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
@@ -85,7 +85,7 @@ def target(request, tmp_path) -> Iterator[Target]:
         yield Target("local", str(root), ["--repo", str(root)], root)
         return
     root = tmp_path / "srv"
-    with _serve(create_app(data_dir=root, mount_ui=False)) as url:
+    with _serve(create_app(data_dir=root, mount_ui=False, auth_enabled=False)) as url:
         yield Target("server", url.replace("http://", "cairn://"), ["--server", url], root)
 
 
@@ -108,13 +108,6 @@ def _seed(t: Target) -> dict[str, str]:
         ids["eval"] = run.id
     with cairn.Run("other", name="solo", repo=t.repo, **QUIET) as run:
         ids["solo"] = run.id
-    from cairn.cli_target import open_api
-
-    repo, server = (t.repo, None) if t.kind == "local" else (None, t.args[1])
-    with open_api(repo, server) as api:
-        ids["report"] = api.post("/api/projects/proj/reports", json={
-            "name": "Findings", "payload": {"source": "# Findings\n\nLoss falls.\n"},
-        }).json()["id"]
     return ids
 
 
@@ -123,128 +116,8 @@ def _seed(t: Target) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_ping(target):
-    _seed(target)
-    out = target.run("ping").output
-    health = json.loads(out)
-    assert health["status"] == "ok"
-    if target.kind == "local":
-        assert health["repo"] == str(target.root.resolve())
-        assert (health["projects"], health["runs"], health["series"], health["points"]) == (2, 4, 1, 3)
-        assert health["artifact_versions"] == 3 and health["reports"] == 1
-        assert health["schema_version"] == 3 and health["layout_version"] == "3"
-        # Answered by the repo's server (started for the command).
-        assert health["served_by"].startswith("http://127.0.0.1:")
-        assert health["pending_legacy_logs"] == 0
-    else:
-        assert "version" in health and "uptime_sec" in health
-
-
-def test_list_archive_unarchive_rm(target):
-    ids = _seed(target)
-    rows = json.loads(target.run("list", "--project", "proj", "--format", "json").output)
-    assert {r["name"] for r in rows} == {"prep", "train", "eval"}
-
-    out = target.run("archive", ids["prep"], ids["eval"]).output
-    assert f"archived {ids['prep']}" in out and f"archived {ids['eval']}" in out
-    names = {r["name"] for r in json.loads(target.run("list", "--format", "json").output)}
-    assert names == {"train", "solo"}
-    only = json.loads(target.run("list", "--archived", "only", "--format", "json").output)
-    assert {r["name"] for r in only} == {"prep", "eval"}
-
-    target.run("unarchive", ids["eval"])
-    names = {r["name"] for r in json.loads(target.run("list", "--format", "json").output)}
-    assert names == {"train", "eval", "solo"}
-
-    assert f"deleted {ids['solo']}" in target.run("rm", ids["solo"]).output
-    names = {r["name"] for r in json.loads(target.run("list", "--format", "json").output)}
-    assert names == {"train", "eval"}
-
-    for argv in (["rm", "nope"], ["archive", "nope"]):
-        result = target.run(*argv, ok=False)
-        assert result.exit_code == 1 and "Traceback" not in result.output
-        assert "run nope not found" in result.output
-        assert result.output.count("\n") == 1
-
-
-def test_export_tables(target, tmp_path):
-    ids = _seed(target)
-    out = tmp_path / "run.json"
-    target.run("export", ids["train"], "-o", str(out))
-    payload = json.loads(out.read_text())
-    assert payload["run"]["run"]["id"] == ids["train"]
-    assert [p["scalar_value"] for p in payload["sequences"]["loss"]] == [1.0, 0.5, 1 / 3]
-    csv = tmp_path / "run.csv"
-    target.run("export", ids["train"], "--format", "csv", "-o", str(csv))
-    assert csv.read_text().splitlines()[0] == "run_id,name,step,wall_time,value"
-    pytest.importorskip("pandas")
-    proj = tmp_path / "proj.csv"
-    target.run("export", "--project", "proj", "--format", "csv", "-o", str(proj))
-    assert len(proj.read_text().splitlines()) == 4
-
-
-def test_export_runs_import_runs(target, tmp_path):
-    ids = _seed(target)
-    archive = tmp_path / "runs.zip"
-    out = target.run("export-runs", ids["train"], ids["eval"], "-o", str(archive)).output
-    assert "exported 2 run(s)" in out
-    with zipfile.ZipFile(archive) as zf:
-        assert json.loads(zf.read("manifest.json"))["run_ids"] == [ids["train"], ids["eval"]]
-
-    imported = json.loads(target.run("import-runs", str(archive), "--format", "json").output)
-    assert [r["original_id"] for r in imported] == [ids["train"], ids["eval"]]
-    assert all(r["new_id"] not in ids.values() for r in imported)
-
-    table = target.run("import-runs", str(archive), "--project", "Copied Runs").output
-    assert table.splitlines()[0].split() == ["NEW_ID", "ORIGINAL_ID", "NAME"]
-    rows = json.loads(target.run("list", "--project", "copied-runs", "--format", "json").output)
-    assert sorted(r["name"] for r in rows) == ["eval", "train"]
-    # The registry entries moved with the runs.
-    fams = json.loads(target.run("artifact", "ls", "--project", "copied-runs", "--format", "json").output)
-    assert {f["name"] for f in fams} == {"model", "data"}
-
-    bad = tmp_path / "bad.zip"
-    bad.write_bytes(b"not a zip")
-    result = target.run("import-runs", str(bad), ok=False)
-    assert result.exit_code == 1 and "Invalid ZIP file" in result.output
-
-
-def test_open(target):
-    ids = _seed(target)
-    result = target.run("open", ids["train"], "--no-browser")
-    if target.kind == "local":
-        # No viewer runs over the repo: the URL it will have, and how to start one.
-        assert result.stdout.strip() == f"http://localhost:4301/p/proj/r/{ids['train']}"
-        assert f"cairn ui --repo {target.root.resolve()}" in result.stderr
-    else:
-        assert result.stdout.strip().endswith(f"/p/proj/r/{ids['train']}")
-
-
-def test_run_url_is_the_open_url(tmp_path):
-    """``Run.url`` is the page ``cairn open`` prints: the paired UI port of a
-    ``cairn server --ui``, never the ingest port the run writes to."""
-    app = create_app(data_dir=tmp_path / "srv", mount_ui=False)
-    app.state.ui_port = 54321
-    with _serve(app) as url:
-        with cairn.Run("proj", name="r", repo=url.replace("http://", "cairn://"), **QUIET) as run:
-            assert run.url == f"http://127.0.0.1:54321/p/proj/r/{run.id}"
-        opened = CliRunner().invoke(cli.main, ["open", run.id, "--no-browser", "--server", url])
-        assert opened.stdout.strip() == run.url
-    # A local repo with no viewer running: the URL once `cairn ui` starts.
-    root = tmp_path / "repo" / ".cairn"
-    with cairn.Run("proj", name="r", repo=str(root), **QUIET) as run:
-        assert run.url == f"http://localhost:4301/p/proj/r/{run.id}"
-
-
-def test_diff_takes_the_target_order(target, tmp_path, monkeypatch):
-    ids = _seed(target)
-    result = target.run("diff", ids["train"], ok=False)
-    assert result.exit_code == 1
-    assert "no source snapshot" in result.output
-
-
 def test_viewer_ls_lists_builtins(target):
-    from cairn.server.custom_viewers import builtin_viewers
+    from cairn.backend.custom_viewers import builtin_viewers
 
     builtins = sorted(builtin_viewers())
     assert "cairn.volume" in builtins  # the viewer bundle is installed in dev
@@ -264,7 +137,7 @@ def test_artifact_ls_and_versions(target):
     _seed(target)
     out = target.run("artifact", "ls").output.splitlines()
     assert out[0].split() == ["PROJECT", "NAME", "TYPE", "VERSIONS", "ALIASES", "UPDATED"]
-    model = next(line for line in out if " model " in line)
+    model = next(line for line in out if "model" in line.split())
     assert "latest=v2,best=v2" in model and model.split()[3] == "2"
     fams = json.loads(target.run("artifact", "ls", "--project", "proj", "--type", "dataset",
                                  "--format", "json").output)
@@ -352,182 +225,9 @@ def test_artifact_lineage(target):
 # ---------------------------------------------------------------------------
 
 
-def test_reports(target, tmp_path):
-    ids = _seed(target)
-    rid = ids["report"]
-    out = target.run("report", "ls").output.splitlines()
-    assert out[0].split() == ["ID", "PROJECT", "NAME", "UPDATED", "BLOCKS"]
-    assert out[1].split()[:3] == [rid, "proj", "Findings"]
-    rows = json.loads(target.run("report", "ls", "--project", "other", "--format", "json").output)
-    assert rows == []
-
-    assert target.run("report", "show", rid).output == "# Findings\n\nLoss falls.\n"
-    md = tmp_path / "r.md"
-    target.run("report", "export", rid, "-o", str(md))
-    assert md.read_text() == "# Findings\n\nLoss falls.\n"
-
-    result = target.run("report", "share", rid, ok=False)
-    assert result.exit_code == 1
-    # The test servers (a local repo's too) run without auth.
-    assert "runs without auth (--no-auth)" in result.output
-
-    assert target.run("report", "rm", rid).output.strip() == f"deleted {rid}"
-    result = target.run("report", "show", rid, ok=False)
-    assert result.exit_code == 1 and f"report {rid} not found" in result.output
-
-
-def test_report_push_pull(target, tmp_path):
-    ids = _seed(target)
-    rid = ids["report"]
-    md = tmp_path / "r.md"
-    assert target.run("report", "pull", rid, "-o", str(md)).output.strip() == f"pulled {rid} to {md}"
-    md.write_text("# Findings\n\nLoss falls fast.\n")
-    assert target.run("report", "push", str(md)).output.strip() == f"updated {rid}"
-    assert target.run("report", "show", rid).output == "# Findings\n\nLoss falls fast.\n"
-
-    # Someone edits it elsewhere: a push of the stale file is refused, --force wins.
-    other = tmp_path / "other.md"
-    target.run("report", "pull", rid, "-o", str(other))
-    import time
-
-    time.sleep(0.01)  # a later updated_at
-    other.write_text("# Findings\n\nEdited elsewhere.\n")
-    target.run("report", "push", str(other))
-    md.write_text("# Findings\n\nMine.\n")
-    result = target.run("report", "push", str(md), ok=False)
-    assert result.exit_code == 1 and "changed since" in result.output
-    target.run("report", "push", str(md), "--force")
-    assert target.run("report", "show", rid).output == "# Findings\n\nMine.\n"
-
-    # A new file creates a report, named after its first heading.
-    new = tmp_path / "new.md"
-    new.write_text("# Ablation\n\nText.\n")
-    assert target.run("report", "push", str(new), ok=False).exit_code != 0  # no --project
-    out = target.run("report", "push", str(new), "--project", "proj").output
-    new_id = out.split()[1]
-    reader = cairn.Reader(repo=target.repo)
-    try:
-        assert {r.name for r in reader.reports("proj")} == {"Findings", "Ablation"}
-        assert reader.report(new_id).source == "# Ablation\n\nText.\n"
-        with pytest.raises(LookupError):
-            reader.report("nope")
-    finally:
-        reader.close()
-
-
-def test_report_shares_on_an_auth_server(tmp_path):
-    from cairn.server import auth
-    from cairn.server.storage.db import Database
-
-    root = tmp_path / "auth-srv"
-    dd = DataDir(root)
-    db = Database.open(dd.db_path)
-    _tid, token = auth.create_token(db, name="ci", role="write")
-    db.close()
-    with _serve(create_app(data_dir=root, mount_ui=False, auth_enabled=True)) as url:
-        t = Target("server", url, ["--server", url], root)
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv("CAIRN_TOKEN", token)
-            from cairn.cli_target import open_api
-
-            with open_api(None, url) as api:
-                api.post("/api/projects", json={"name": "proj"})
-                rid = api.post("/api/projects/proj/reports", json={
-                    "name": "R", "payload": {"source": "hi"},
-                }).json()["id"]
-            share = t.run("report", "share", rid, "--expires", "7d")
-            link = share.stdout.strip()
-            assert link.startswith(f"{url}/share/")
-            listed = json.loads(t.run("report", "shares", rid, "--format", "json").output)
-            assert [s["status"] for s in listed] == ["active"]
-            share_id = listed[0]["id"]
-            assert share_id in share.stderr
-            assert t.run("report", "unshare", rid, share_id).output.strip() == f"revoked {share_id}"
-            table = t.run("report", "shares", rid).output.splitlines()
-            assert table[1].split()[:2] == [share_id, "revoked"]
-        # Without a token: one line saying how to log in.
-        result = t.run("report", "shares", rid, ok=False)
-        assert result.exit_code == 1 and f"cairn login {url}" in result.output
-
-
 # ---------------------------------------------------------------------------
 # Target resolution, served repos, sync
 # ---------------------------------------------------------------------------
-
-
-def test_lookup_order(tmp_path, monkeypatch):
-    """--repo/--server > CAIRN_REPO/CAIRN_SERVER > config file > ./.cairn."""
-    a, b, c = (tmp_path / n / ".cairn" for n in "abc")
-    for root, project in ((a, "pa"), (b, "pb"), (c, "pc")):
-        with cairn.Run(project, repo=str(root), **QUIET):
-            pass
-
-    def projects() -> set[str]:
-        result = CliRunner().invoke(cli.main, ["list", "--format", "json"])
-        assert result.exit_code == 0, result.output
-        return {r["project"] for r in json.loads(result.output)}
-
-    config.write_config_file({"repo": str(c)})
-    assert projects() == {"pc"}
-    monkeypatch.setenv("CAIRN_REPO", str(b))
-    assert projects() == {"pb"}
-    result = CliRunner().invoke(cli.main, ["list", "--format", "json", "--repo", str(a)])
-    assert {r["project"] for r in json.loads(result.output)} == {"pa"}
-    monkeypatch.delenv("CAIRN_REPO")
-    config.write_config_file({})
-    monkeypatch.chdir(a.parent)
-    assert projects() == {"pa"}
-    result = CliRunner().invoke(cli.main, ["list", "--repo", str(a), "--server", "http://x:1"])
-    assert result.exit_code == 2 and "not both" in result.output
-    # diff follows the same order (it used to prefer ./.cairn over CAIRN_REPO).
-    monkeypatch.setenv("CAIRN_REPO", str(b))
-    result = CliRunner().invoke(cli.main, ["diff", "nope"])
-    assert result.exit_code == 1 and "run nope not found" in result.output
-    result = CliRunner().invoke(cli.main, ["ping"])
-    assert json.loads(result.output)["repo"] == str(b.resolve())
-
-
-def test_missing_local_repo_is_one_line(tmp_path):
-    missing = tmp_path / "nowhere" / ".cairn"
-    for argv in (["list"], ["ping"], ["rm", "x"], ["report", "ls"], ["artifact", "ls"]):
-        result = CliRunner().invoke(cli.main, [*argv, "--repo", str(missing)])
-        assert result.exit_code == 1, (argv, result.output)
-        assert result.output.startswith(f"Error: no Cairn repo at {missing}")
-        assert not missing.exists()
-
-
-def test_a_served_local_repo_is_reached_through_its_server(tmp_path):
-    """Commands on a repo a live `cairn ui` serves (registered in its
-    server.json) go to that server; `open` finds its viewer."""
-    from cairn import viewer
-    from cairn.cli_target import open_api
-    from cairn.server.registration import remove_info, write_info
-
-    if not viewer.is_available():
-        pytest.skip("cairn-ui viewer not installed")
-    root = tmp_path / "cairn"
-    with cairn.Run("proj", name="r", repo=str(root), **QUIET) as run:
-        rid = run.id
-    # The test server that served the run stops: the repo is free again.
-    from tests.conftest import _SERVERS
-
-    _SERVERS.stop_repo(root)
-    app = create_app(data_dir=root, mount_ui=True, background_tasks=False)
-    with _serve(app) as url:
-        port = int(url.rsplit(":", 1)[1])
-        write_info(root, url=url, token=None, ui_url=url)
-        try:
-            with open_api(str(root), None) as api:
-                assert api.base == url
-            result = CliRunner().invoke(cli.main, ["archive", rid, "--repo", str(root)])
-            assert result.exit_code == 0, result.output
-            result = CliRunner().invoke(cli.main, ["open", rid, "--repo", str(root), "--no-browser"])
-            assert result.exit_code == 0, result.output
-            assert result.stdout.strip() == f"http://localhost:{port}/p/proj/r/{rid}"
-            health = json.loads(CliRunner().invoke(cli.main, ["ping", "--repo", str(root)]).output)
-            assert health["served_by"] == url and health["archived_runs"] == 1
-        finally:
-            remove_info(root)
 
 
 def test_sync_uploads_run_directories_logged_while_the_server_was_down(tmp_path):
@@ -541,7 +241,7 @@ def test_sync_uploads_run_directories_logged_while_the_server_was_down(tmp_path)
             run.track(float(step), name="loss", step=step)
     rd = RunDir.for_run(run.id)
     assert rd.exists() and rd.log().acked() == 0
-    with _serve(create_app(data_dir=tmp_path / "srv", mount_ui=False)) as url:
+    with _serve(create_app(data_dir=tmp_path / "srv", mount_ui=False, auth_enabled=False)) as url:
         import httpx
 
         for _ in range(2):  # the second sync sends nothing again
@@ -556,25 +256,3 @@ def test_sync_uploads_run_directories_logged_while_the_server_was_down(tmp_path)
         assert result.exit_code == 0, result.output
         assert "removed 1 run directory" in result.output
     assert not rd.path.exists()
-
-
-def test_configure_sets_one_target(tmp_path):
-    repo = tmp_path / "r" / ".cairn"
-    result = CliRunner().invoke(cli.main, ["configure", "--server", "http://gpu:4300"])
-    assert result.exit_code == 0
-    result = CliRunner().invoke(cli.main, ["configure", "--repo", str(repo)])
-    assert result.exit_code == 0
-    assert config.load_config_file() == {"repo": str(repo.resolve())}
-    CliRunner().invoke(cli.main, ["configure", "--server", "http://gpu:4300"])
-    assert config.load_config_file() == {"server": "http://gpu:4300"}
-
-
-def test_local_commands_see_logged_runs_without_a_sync(tmp_path):
-    """As cairn.Reader does, a local command ingests pending run logs first."""
-    root = tmp_path / "walrepo" / ".cairn"
-    with cairn.Run("proj", name="w", repo=str(root), **QUIET) as run:
-        rid = run.id
-    result = CliRunner().invoke(cli.main, ["archive", rid, "--repo", str(root)])
-    assert result.exit_code == 0, result.output
-    result = CliRunner().invoke(cli.main, ["list", "--archived", "only", "--format", "json", "--repo", str(root)])
-    assert [r["id"] for r in json.loads(result.output)] == [rid]

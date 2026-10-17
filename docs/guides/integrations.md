@@ -11,7 +11,7 @@ needs its framework installed. The matching extra installs it for you:
 | PyTorch Lightning | `from cairn.integrations.lightning import CairnLogger` | `cairn-track[lightning]` |
 | Ultralytics YOLO | `from cairn.integrations.ultralytics import add_cairn_callbacks` | `cairn-track[ultralytics]` |
 | XGBoost | `from cairn.integrations.xgboost import CairnCallback` | `cairn-track[xgboost]` |
-| TensorBoard event files | `cairn import-tb LOGDIR` | `cairn-track[tb]` |
+| TensorBoard event files | `from cairn.sdk.import_tb import import_tensorboard` | `cairn-track[tb]` |
 
 Importing an integration without its framework raises an `ImportError` that
 names the extra.
@@ -48,7 +48,7 @@ The integrations give their runs a total, so the UI shows [progress and an ETA](
 | Keras | `epochs` | `run.progress(epoch + 1, total=epochs)` after each epoch: the integration's steps are epoch indices (batch indices only with `log_every_n_batches`), so progress counts epochs. |
 | Ultralytics | `epochs` | `run.progress(epoch + 1, total=epochs)` after each epoch's training. |
 
-XGBoost, sweeps (`Sweep.run`, `cairn agent`) and TensorBoard imports set none: a trial's script
+XGBoost, sweeps (`Sweep.run`) and TensorBoard imports set none: a trial's script
 sets its own run's total.
 
 ## Model checkpoints
@@ -259,18 +259,25 @@ The callback does not record `params` as config. Add them yourself with
 
 ## Importing TensorBoard logs
 
-`cairn import-tb` turns TensorBoard event files into cairn runs. It needs the
+`import_tensorboard()` turns TensorBoard event files into cairn runs. It needs the
 `[tb]` extra.
 
 ```bash
-pip install 'cairn-track[tb]'
-cairn import-tb runs/ --project my-experiments
+pip install 'cairn-track[tb] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'
+```
+
+```python
+from cairn.sdk.import_tb import import_tensorboard
+
+run_ids = import_tensorboard(
+    "runs/", project="my-experiments", repo="./.cairn",
+)
 ```
 
 - Every directory under `LOGDIR` that holds `*tfevents*` files becomes one run.
   The run is named after that directory relative to `LOGDIR` (or after
   `LOGDIR` itself, when the events sit directly in it).
-- `--project` defaults to `LOGDIR`'s directory name. `--repo` picks the repo or
+- `project` defaults to `LOGDIR`'s directory name. `repo` picks the repo or
   server; without it, the usual [resolution](../reference/configuration.md)
   applies.
 - Scalars, images and histograms are imported with their TensorBoard step and
@@ -281,9 +288,7 @@ cairn import-tb runs/ --project my-experiments
   imported runs sort by when they happened. Imported runs are `completed`.
 - A directory whose events hold nothing importable produces no run.
 
-The command prints the new run ids, one per line, and a count on stderr. From
-Python, call `cairn.sdk.import_tb.import_tensorboard(logdir, project=..., repo=...)`,
-which returns the list of run ids.
+The function returns the list of new run IDs.
 
 ## Other trackers
 

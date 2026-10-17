@@ -1,0 +1,431 @@
+"""SQLite wrapper with WAL mode for concurrent multi-process access.
+
+SQLite in WAL mode supports:
+- One writer at a time (others wait via busy_timeout)
+- Multiple concurrent readers alongside the writer, each reading the last
+  committed state
+
+This class uses both. Writes go through ONE writer connection, serialized by a
+reentrant lock within the process (cross-process serialization is SQLite's
+file lock). Reads take a connection from a pool of read-only connections and
+never touch that lock, so a page load never waits behind an ingest
+transaction, and reads never wait behind each other. The one exception: a
+read made by the thread that currently holds the write lock (inside
+``transaction()``, say) runs on the writer connection, so it sees that
+transaction's own uncommitted rows.
+
+Heavy reads (a statement that returned thousands of rows last time) run one
+at a time. Python's sqlite3 releases the GIL around every row it steps, so
+two threads fetching large results at once hand the GIL back and forth per
+row, each waiting up to the interpreter's switch interval for it: measured,
+four concurrent 4000-row series reads took 250-400 ms each instead of 3 ms,
+and the WAL could not be checkpointed while they overlapped (it grew by
+hundreds of MB). Light reads (a project list, a session check) skip that
+queue, so they never wait behind a heavy one.
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from collections import deque
+import threading
+import time
+from collections.abc import Iterator
+from datetime import date, datetime
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Sequence
+
+from cairn.backend.storage.migrations import SCHEMA_RELEASE, SCHEMA_VERSION, apply_migrations, needs_migration
+
+# Explicit adapters for datetime/date parameters: Python 3.12 deprecates the
+# implicit defaults. ISO 8601 with a "T", the format every other timestamp in
+# the database is written in (``.isoformat()``); the old default wrote a space.
+sqlite3.register_adapter(datetime, datetime.isoformat)
+sqlite3.register_adapter(date, date.isoformat)
+
+#: Idle read connections kept for reuse; more are opened on demand under
+#: load and closed again when returned beyond this many.
+_MAX_IDLE_READERS = 8
+
+#: A read statement that last took longer than this is "heavy": heavy reads
+#: run one at a time (see ``_reader``).
+_HEAVY_READ_S = 0.005
+
+
+class _FifoLock:
+    """A lock granted in arrival order (``threading.Lock`` is not: a thread
+    that releases and re-acquires in a loop can starve the others)."""
+
+    def __init__(self) -> None:
+        self._mutex = threading.Lock()
+        self._held = False
+        self._waiters: deque[threading.Event] = deque()
+
+    def acquire(self) -> None:
+        with self._mutex:
+            if not self._held:
+                self._held = True
+                return
+            turn = threading.Event()
+            self._waiters.append(turn)
+        turn.wait()  # release() hands the lock over by setting it
+
+    def release(self) -> None:
+        with self._mutex:
+            if self._waiters:
+                self._waiters.popleft().set()
+            else:
+                self._held = False
+
+
+@contextmanager
+def _open_lock(db_path: Path) -> Iterator[None]:
+    """Serialize opening ``db_path`` across processes.
+
+    The first open of a new database switches it to WAL mode and creates the
+    schema. The journal-mode switch needs the database to itself, and SQLite
+    answers a concurrent one with an immediate "database is locked" (the busy
+    timeout does not apply to it), so eight sweep workers starting on a fresh
+    repo used to lose some of their number. Every open therefore takes an
+    exclusive lock on a sibling file for the switch and the migrations; it is
+    held for milliseconds, and only while opening.
+    """
+    lock_path = db_path.with_name(db_path.name + ".open-lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as fh:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:  # LK_LOCK gives up after ~10 s; keep waiting
+                    continue
+            try:
+                yield
+            finally:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+class Database:
+    dialect = "sqlite"
+    integrity_errors = (sqlite3.IntegrityError,)
+    """Owns a SQLite writer connection and a pool of read connections."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._lock = threading.RLock()
+        # Per-thread depth of the write lock: a thread inside a write reads
+        # on the writer connection (see ``_reader``).
+        self._writing = threading.local()
+        self._conn = sqlite3.connect(
+            str(self.path),
+            check_same_thread=False,
+            timeout=10.0,  # busy timeout for write contention
+        )
+        # Enable WAL mode for concurrent read/write access across processes.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        # Every commit is on disk before it returns: an ingest request is
+        # acknowledged (and its client may drop the records) only after its
+        # transaction committed, so a power loss must not undo it.
+        self._conn.execute("PRAGMA synchronous=FULL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._pool: list[sqlite3.Connection] = []
+        self._pool_lock = threading.Lock()
+        self._heavy_gate = _FifoLock()
+        # SQL text -> seconds its last run took (bounded; see _note_duration).
+        self._read_cost: dict[str, float] = {}
+        self._closed = False
+        # Nesting depth of ``transaction()`` on the writer connection (only
+        # touched under ``self._lock``): a nested one is a SAVEPOINT, and
+        # ``write``/``executemany`` inside one do not commit. Callbacks
+        # registered with ``after_commit`` run once the outermost commits.
+        self._tx_depth = 0
+        self._after_commit: list[Any] = []
+
+    @classmethod
+    def open(cls, path: Path) -> "Database":
+        """Open (or create) a database, run migrations, return it.
+
+        Safe to call from many processes at once on a database that does not
+        exist yet (see ``_open_lock``).
+        """
+        if str(path).startswith(("postgresql://", "postgres://", "postgresql+psycopg://")):
+            try:
+                from .postgres import PostgresDatabase
+            except ImportError as exc:
+                raise RuntimeError("PostgreSQL storage requires cairn-track[deployment]") from exc
+            return PostgresDatabase(path)
+        if str(path).startswith("sqlite:///"):
+            path = Path(str(path)[10:])
+        elif "://" in str(path):
+            raise ValueError("database URL must use PostgreSQL or SQLite")
+        with _open_lock(Path(path)):
+            # Refuse unsupported data before journal-mode changes or backups.
+            # The open lock keeps another Cairn initializer out during the check.
+            if Path(path).exists() and Path(path).stat().st_size:
+                probe = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+                try:
+                    needs_migration(probe)
+                finally:
+                    probe.close()
+            db = cls(path)
+            try:
+                with db._write_lock():
+                    if needs_migration(db._conn):
+                        backup_before_migrating(db._conn, Path(path))
+                    from cairn.backend.storage.migrations import stored_schema_version, SCHEMA_VERSION
+                    if stored_schema_version(db._conn) != SCHEMA_VERSION:
+                        apply_migrations(db._conn)
+            except BaseException:
+                db.close()
+                raise
+        return db
+
+    def lock_resource(self, kind, identifier):
+        if not self._tx_depth:
+            raise RuntimeError('resource locks require a transaction')
+        # SQLite's IMMEDIATE transaction already holds the database writer lock.
+
+    def columns(self, table):
+        if not table.replace('_', '').isalnum(): raise ValueError('invalid table name')
+        return [row[1] for row in self.read(f'PRAGMA table_info({table})')]
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        with self._pool_lock:
+            idle, self._pool = self._pool, []
+        for con in idle:
+            con.close()
+        with self._lock:
+            self._conn.close()
+
+    # --- connections -------------------------------------------------------
+
+    @contextmanager
+    def _write_lock(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            self._writing.depth = getattr(self._writing, "depth", 0) + 1
+            try:
+                yield self._conn
+            finally:
+                self._writing.depth -= 1
+
+    def _open_reader(self) -> sqlite3.Connection:
+        con = sqlite3.connect(str(self.path), check_same_thread=False, timeout=10.0)
+        con.execute("PRAGMA busy_timeout=5000")
+        # A read connection must never write: its writes would bypass the
+        # writer lock that serializes this process's transactions.
+        con.execute("PRAGMA query_only=ON")
+        return con
+
+    def _note_duration(self, sql: str, seconds: float) -> None:
+        cost = self._read_cost
+        if len(cost) > 4096 and sql not in cost:  # dynamic SQL: start over
+            cost.clear()
+        cost[sql] = seconds
+
+    @contextmanager
+    def _reader(self, sql: str) -> Iterator[sqlite3.Connection]:
+        if getattr(self._writing, "depth", 0):
+            # Inside this thread's own write: read what it wrote so far.
+            yield self._conn
+            return
+        heavy = self._read_cost.get(sql, 0.0) > _HEAVY_READ_S
+        if heavy:
+            self._heavy_gate.acquire()
+        with self._pool_lock:
+            con = self._pool.pop() if self._pool else None
+        if con is None:
+            con = self._open_reader()
+        t0 = time.perf_counter()
+        try:
+            yield con
+        finally:
+            if heavy:
+                self._heavy_gate.release()
+            self._note_duration(sql, time.perf_counter() - t0)
+            with self._pool_lock:
+                keep = not self._closed and len(self._pool) < _MAX_IDLE_READERS
+                if keep:
+                    self._pool.append(con)
+            if not keep:
+                con.close()
+
+    # --- writes ------------------------------------------------------------
+
+    def write(self, sql: str, params: Sequence[Any] | None = None) -> None:
+        with self._write_lock() as con:
+            con.execute(sql, params or [])
+            if not self._tx_depth:
+                con.commit()
+
+    def executemany(self, sql: str, seq: Sequence[Sequence[Any]]) -> None:
+        with self._write_lock() as con:
+            con.executemany(sql, list(seq))
+            if not self._tx_depth:
+                con.commit()
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        """Yield the writer connection inside a BEGIN/COMMIT (rollback on error).
+
+        ``immediate`` takes the write lock up front: a transaction that reads
+        and then writes must, or another process's writer makes its lock
+        upgrade fail at once with "database is locked" (no busy wait).
+        Keep the body to database work: every other writer in this process
+        waits for it (readers do not).
+
+        Nested in another transaction of this thread it is a SAVEPOINT: an
+        error rolls back only its own part, and nothing commits before the
+        outermost transaction does (WAL ingestion applies a batch of ops and
+        its read offset in one transaction this way).
+        """
+        with self._write_lock() as con:
+            if self._tx_depth:
+                name = f"sp{self._tx_depth}"
+                con.execute(f"SAVEPOINT {name}")
+                hook_checkpoint = len(self._after_commit)
+                self._tx_depth += 1
+                try:
+                    yield con
+                except BaseException:
+                    con.execute(f"ROLLBACK TO {name}")
+                    con.execute(f"RELEASE {name}")
+                    del self._after_commit[hook_checkpoint:]
+                    raise
+                else:
+                    con.execute(f"RELEASE {name}")
+                finally:
+                    self._tx_depth -= 1
+                return
+            con.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            self._tx_depth = 1
+            try:
+                yield con
+            except BaseException:
+                self._tx_depth = 0
+                self._after_commit.clear()
+                con.rollback()
+                raise
+            else:
+                self._tx_depth = 0
+                con.commit()
+                hooks, self._after_commit = self._after_commit, []
+                for fn in hooks:
+                    fn()
+
+    def after_commit(self, fn: Any) -> None:
+        """Run ``fn()`` once this thread's open transaction commits (dropped
+        if it rolls back), or now when none is open. For side effects outside
+        the database that must not happen twice when a transaction is
+        retried (the on-disk log files of ``insert_logs``)."""
+        with self._write_lock():
+            if self._tx_depth:
+                self._after_commit.append(fn)
+                return
+        fn()
+
+    # --- reads -------------------------------------------------------------
+
+    def read(
+        self, sql: str, params: Sequence[Any] | None = None
+    ) -> list[tuple[Any, ...]]:
+        with self._reader(sql) as con:
+            return con.execute(sql, params or []).fetchall()
+
+    def read_one(
+        self, sql: str, params: Sequence[Any] | None = None
+    ) -> tuple[Any, ...] | None:
+        with self._reader(sql) as con:
+            cur = con.execute(sql, params or [])
+            try:
+                return cur.fetchone()
+            finally:
+                # An unfinished statement would keep its read snapshot open.
+                cur.close()
+
+    def read_columns(
+        self, sql: str, params: Sequence[Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return rows as dicts keyed by column name."""
+        with self._reader(sql) as con:
+            cur = con.execute(sql, params or [])
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def backup_to(con: sqlite3.Connection, dest: Path) -> Path:
+    """A consistent copy of the database behind ``con`` at ``dest`` (SQLite's
+    online backup API: safe while other connections read and write), fsynced
+    before it is renamed into place."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f".{dest.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    out = sqlite3.connect(str(tmp))
+    try:
+        con.backup(out)
+        # A self-contained single file (no -wal sidecar to copy along).
+        out.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        out.close()
+    with open(tmp, "rb") as fh:
+        os.fsync(fh.fileno())
+    os.replace(tmp, dest)
+    _fsync_dir(dest.parent)
+    return dest
+
+
+def _fsync_dir(path: Path) -> None:
+    if os.name == "nt":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def backup_before_migrating(con: sqlite3.Connection, db_path: Path) -> Path:
+    """The automatic backup taken before an older database is migrated:
+    ``<repo>/backups/cairn-<UTC timestamp>-pre-<release>.db``."""
+    import logging
+
+    from datetime import timezone
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    release = SCHEMA_RELEASE.get(SCHEMA_VERSION, f"schema{SCHEMA_VERSION}")
+    dest = backup_to(con, db_path.parent / "backups" / f"cairn-{stamp}-pre-{release}.db")
+    logging.getLogger(__name__).warning(
+        "cairn: backed up %s to %s before migrating it to schema %d",
+        db_path, dest, SCHEMA_VERSION,
+    )
+    return dest
+
+
+def quick_check(db: Database) -> list[str]:
+    """SQLite's ``PRAGMA quick_check``: [] when the database is sound, else
+    the problems it reports."""
+    if db.dialect != "sqlite":
+        db.read_one("SELECT 1")
+        return []
+    with db._write_lock() as con:
+        rows = [r[0] for r in con.execute("PRAGMA quick_check").fetchall()]
+    return [] if rows == ["ok"] else rows

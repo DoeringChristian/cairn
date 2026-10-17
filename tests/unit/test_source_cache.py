@@ -10,8 +10,8 @@ import tarfile
 import pytest
 import zstandard as zstd
 
-from cairn.server import source_cache
-from cairn.server.source_cache import SourceCache
+from cairn.backend import source_cache
+from cairn.backend.source_cache import SourceCache
 
 
 def _archive(files: dict[str, bytes], dirs: tuple[str, ...] = ()) -> bytes:
@@ -67,21 +67,54 @@ def test_two_file_reads_decompress_once(client, counted):
     assert len(counted) == 1
 
 
+@pytest.mark.parametrize("transport", ["repository", "http"])
+def test_source_upload_uses_configured_blob_store(tmp_path, transport):
+    from cairn.backend import integrity, sources
+    from cairn.backend.repository import Repository
+    from cairn.backend.storage.context import StorageConfig
+    from cairn.server.app import create_app
+    from fastapi.testclient import TestClient
+
+    storage = StorageConfig(tmp_path / "repo", blob_root=str(tmp_path / "separate-blobs"))
+    files = {"train.py": b"print('captured source')\n"}
+    if transport == "repository":
+        writer = Repository(storage)
+        try:
+            rid = writer.create_run({"project": "p"})["run_id"]
+            writer.upload_source(rid, _archive(files), {"files": [{"path": "train.py"}]})
+            assert sources.file(writer._db, writer.blobs, rid, "train.py") == files["train.py"]
+        finally:
+            writer.close()
+    else:
+        app = create_app(data_dir=storage.root, blob_root=storage.blob_root,
+                         mount_ui=False, auth_enabled=False)
+        with TestClient(app) as client:
+            rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
+            _upload(client, rid, files)
+            result = client.get(f"/api/runs/{rid}/source/file", params={"path": "train.py"})
+            assert result.status_code == 200, result.text
+            assert result.json()["content"] == files["train.py"].decode()
+    db, blobs, directory = storage.open()
+    try:
+        digest, _ = sources.get(db, rid)
+        assert blobs.exists(digest)
+        assert not (directory.artifacts_dir / digest[:2] / digest / "blob").exists()
+        assert integrity.fsck(db, directory, blobs)["missing_blobs"] == []
+    finally:
+        db.close()
+
+
 def test_reupload_is_not_served_stale(client, counted):
     rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
     _upload(client, rid, {"train.py": b"old\n"})
     assert client.get(f"/api/runs/{rid}/source/file",
                       params={"path": "train.py"}).json()["content"] == "old\n"
     _upload(client, rid, {"train.py": b"new\n"})
-    # Guarantee a distinct mtime even on a coarse-grained filesystem clock.
-    archive = client.app.state.data_dir.sources_dir / rid / "tree.tar.zst"
-    st = archive.stat()
-    os.utime(archive, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
     assert client.get(f"/api/runs/{rid}/source/file",
                       params={"path": "train.py"}).json()["content"] == "new\n"
     assert len(counted) == 2
-    # The old tree was dropped, not kept alongside.
-    assert len(source_cache.SOURCE_CACHE._trees) == 1
+    # Distinct content hashes have independent cache entries.
+    assert len(source_cache.SOURCE_CACHE._trees) == 2
 
 
 def test_path_traversal_still_rejected(client, counted):

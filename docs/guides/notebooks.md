@@ -3,7 +3,7 @@
 In Jupyter and marimo, cairn shows its pages inline: a run's page, the
 project workspace, reports and single cards render in the cell's output as the viewer's own
 pages, live, without the app's navigation. They need the viewer
-(`pip install 'cairn-track[ui]'`) and a running viewer over the same repo,
+(`pip install 'cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'`) and a running viewer over the same repo,
 such as `cairn ui`.
 
 ## A run
@@ -79,7 +79,7 @@ repo (found through the repo), or `cairn.configure(repo="cairn://...")` /
 An embed is the viewer's page in an iframe (`/embed/run/<run id>?tab=...`,
 `/embed/workspace/<project>?filter=...`, `/embed/report/<project>/<report id>`)
 and reads with the same session as the app: with auth on, log in to the viewer
-in the browser first (or start it with `cairn ui --no-auth` for local work).
+in the browser first. `cairn ui` serves a local repo on loopback without authentication.
 
 ## marimo
 
@@ -88,6 +88,6 @@ experiment and shows its run page, the workspace filtered to its group and a
 report:
 
 ```bash
-cairn ui --repo /tmp/cairn-notebook/.cairn --no-auth &
+cairn ui --repo /tmp/cairn-notebook/.cairn &
 CAIRN_REPO=/tmp/cairn-notebook/.cairn marimo edit examples/notebook_embeds.py
 ```

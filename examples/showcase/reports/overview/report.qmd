@@ -1,0 +1,123 @@
+---
+title: A complete Cairn experiment
+description: From logged evidence to a published conclusion.
+inputs:
+  baseline: "run:@BASELINE@"
+  balanced: "run:@BALANCED@"
+  fast: "run:@FAST@"
+  dataset: "artifact:@DATASET@"
+---
+
+## Which learning rate should we use?
+
+Three deterministic runs fit $\hat y = wx$ to the same synthetic dataset. Every chart below is recomputed from its declared run input, and every publication retains that evidence.
+
+```{python}
+#| echo: false
+import json
+from pathlib import Path
+from html import escape
+from IPython.display import display, HTML, Markdown, JSON
+
+def read_json(path):
+    return json.loads(Path(path).read_text())
+
+def read_series(folder, key):
+    return [event for line in (folder / "metrics.jsonl").read_text().splitlines()
+            if (event := json.loads(line)).get("name") == key]
+
+def report_html(markup):
+    display(HTML(markup))
+
+def metric(label, value, detail="", fmt=None):
+    shown = format(value, fmt) if fmt else str(value)
+    display(HTML(f'<div class="metric"><span>{escape(label)}</span><strong>{escape(shown)}</strong><small>{escape(detail)}</small></div>'))
+import matplotlib.pyplot as plt
+runs = [("Baseline", inputs["baseline"]), ("Balanced", inputs["balanced"]), ("Fast", inputs["fast"])]
+curves = [(name, read_series(folder, "loss")) for name, folder in runs]
+initial = curves[0][1][0]["value"]
+final = curves[-1][1][-1]["value"]
+metric("Best final loss", final, "Mean squared error", fmt=".4f")
+metric("Reduction", initial/final, "Initial / final", fmt=".1f")
+metric("Compared runs", len(runs), "Same data, different learning rates")
+fig, ax = plt.subplots(figsize=(8, 3.6))
+for (name, points), color in zip(curves, ["#9a6c43", "#677a61", "#176b5b"]):
+    ax.semilogy([p["step"] for p in points], [p["value"] for p in points], label=name, color=color)
+ax.set(xlabel="Epoch", ylabel="Mean squared error")
+ax.legend(frameon=False)
+fig.tight_layout()
+display(fig)
+plt.close(fig)
+```
+
+::: {.finding}
+**The fastest setting reaches the lowest final loss**
+
+In this fixed experiment, the fast run reduces the objective substantially over the recorded training steps. This is an observed result for this synthetic problem, not a general recommendation.
+:::
+
+## Interactive comparison cards
+
+The cards use the same captured input roles as the Python figure. Their HTML and data are identical in the native reader and standalone export. Screenshot and settings operate on this captured view.
+
+```{card}
+type: line
+title: Loss across the three runs
+inputs: [baseline, balanced, fast]
+metric: loss
+x: epoch
+yLog: true
+```
+
+```{card}
+type: bar
+title: Final loss by setting
+inputs: [baseline, balanced, fast]
+metric: loss
+```
+
+```{card}
+type: scalar
+title: Final model weights
+inputs: [baseline, balanced, fast]
+metric: summary.final_weight
+```
+
+```{card}
+type: line
+title: Smoothed log loss, grouped by shared seed
+inputs: [baseline, balanced, fast]
+expression: log10(metrics.loss)
+xExpression: step * 2
+groupBy: config.seed
+smoothing: 0.6
+caption: Per-run exponential smoothing, then mean and standard deviation at equal x coordinates.
+```
+
+## Read the evidence
+
+```{python}
+#| echo: false
+from html import escape
+rows = []
+for name, folder in runs:
+    config = read_json(folder / "config.json")
+    summary = read_json(folder / "summary.json")
+    values = read_series(folder, "loss")
+    rows.append(f'<tr><td>{escape(name)}</td><td>{config["lr"]}</td><td>{values[-1]["value"]:.5f}</td><td>{summary["final_weight"]:.4f}</td></tr>')
+report_html('<table><thead><tr><th>Run</th><th>Learning rate</th><th>Final loss</th><th>Weight</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>')
+```
+
+The dataset is a versioned artifact. Training runs consume that version and publish model checkpoints; evaluation consumes the selected checkpoint. The report itself captures run evidence and the dataset version.
+
+- [Media atlas](@MEDIA_URL@): images, interactive figures, sound, motion, and the complete logged-media inventory.
+- [Methods and provenance](@METHODS_URL@): reproducible setup, a grid sweep, and the source-to-publication workflow.
+- [Run comparison workspace](/p/@PROJECT@/runs): inspect metrics, configuration differences, and summaries.
+- [Artifact versions](/p/@PROJECT@/artifacts): inspect the dataset, model aliases, viewer, and report builds.
+- [Lineage](/p/@PROJECT@/lineage): follow dataset → training → model → evaluation.
+
+::: {.note}
+**Explore the report**
+
+Use the figure controls to inspect or download figures. The input panel links to captured evidence, and the manifest records the build's dependencies. The standalone HTML exports include each report for offline reading; navigation back into the tracker requires the running UI.
+:::

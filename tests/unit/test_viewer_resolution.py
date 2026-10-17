@@ -38,7 +38,7 @@ def test_an_incomplete_override_serves_nothing_rather_than_crashing(
     monkeypatch.setenv("CAIRN_UI_DIST", str(half))
 
     assert viewer.dist_path() is None
-    app = create_app(data_dir=tmp_path / "cairn", mount_ui=True)  # must not raise
+    app = create_app(data_dir=tmp_path / "cairn", mount_ui=True, auth_enabled=False)  # must not raise
     assert TestClient(app).get("/").json()["status"] == "no_ui"
 
 
@@ -58,7 +58,7 @@ def test_no_viewer_anywhere_yields_a_placeholder_naming_the_extra(
     monkeypatch.setattr(viewer, "_from_dev_checkout", lambda: None)
 
     assert not viewer.is_available()
-    app = create_app(data_dir=tmp_path / "cairn", mount_ui=True)
+    app = create_app(data_dir=tmp_path / "cairn", mount_ui=True, auth_enabled=False)
     body = TestClient(app).get("/").json()
     assert body["status"] == "no_ui"
     assert "cairn-track[ui]" in body["message"]
@@ -66,7 +66,7 @@ def test_no_viewer_anywhere_yields_a_placeholder_naming_the_extra(
 
 def test_the_default_app_registers_no_spa_catch_all(tmp_path) -> None:
     """Without mount_ui nothing may answer an arbitrary path with HTML."""
-    app = create_app(data_dir=tmp_path / "cairn")
+    app = create_app(data_dir=tmp_path / "cairn", auth_enabled=False)
     assert TestClient(app).get("/definitely-not-a-route").status_code == 404
 
 

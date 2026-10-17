@@ -169,7 +169,7 @@ def _upload(repo: Path, run_id: str) -> None:
     from cairn.sdk.runlog.rundir import RunDir
     from tests import standin_server
 
-    rd = RunDir.for_run(run_id)
+    rd = RunDir.for_run(run_id, base=repo)
     assert rd.meta()["repo"] == str(repo.resolve())
     standin_server.sync_repo(repo)
     assert {ref.key for ref in rd.logs()} == {"main", *(f"rank{r}" for r in range(1, N))}

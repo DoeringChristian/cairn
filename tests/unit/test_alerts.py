@@ -13,11 +13,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 import cairn
-from cairn.server import alerts as alerts_core
-from cairn.server import ingest_ops
+from cairn.backend import alerts as alerts_core
+from cairn.backend import ingest_ops
 from cairn.server.app import create_app
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 
 def _alerts(db, run_id=None):
@@ -267,7 +267,7 @@ def test_unreachable_webhook_is_logged_not_raised(tmp_path):
 
 
 def test_server_lifespan_delivers_to_webhook(tmp_path, sink):
-    app = create_app(data_dir=tmp_path / "cairn", alert_webhook=sink.url)
+    app = create_app(data_dir=tmp_path / "cairn", alert_webhook=sink.url, auth_enabled=False)
     with TestClient(app) as client:
         rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
         client.post(f"/api/runs/{rid}/alerts", json={"title": "from the server"})
@@ -278,7 +278,7 @@ def test_server_lifespan_delivers_to_webhook(tmp_path, sink):
 
 
 def test_background_tasks_off_does_not_deliver(tmp_path, sink):
-    app = create_app(data_dir=tmp_path / "cairn", alert_webhook=sink.url, background_tasks=False)
+    app = create_app(data_dir=tmp_path / "cairn", alert_webhook=sink.url, background_tasks=False, auth_enabled=False)
     with TestClient(app) as client:
         rid = client.post("/api/runs", json={"project": "p"}).json()["run_id"]
         client.post(f"/api/runs/{rid}/alerts", json={"title": "x"})

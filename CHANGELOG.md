@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.0 — 2026-10-18
+
+Reports become the main interface: immutable artifact publications, editable QMD
+drafts, inline Markdown/Python cells, server execution, captured evidence and
+publication history. The browser uses the shared card shell, settings palette and
+camera/settings/overflow actions. Plotly figures use their standard toolbar and
+stable wheel zoom. Source references contain a file, line and quoted Markdown. Compact copy/comment
+actions also work on report titles, headings and figures.
+
+Local SDK operations access SQLite and files directly, without spawning a server.
+Remote clients keep durable upload journals and send idempotent batches to one
+server. `cairn.init()`, `cairn.log({...})` and `cairn.track(value, metadata)` support
+general observations without requiring a step.
+
+The backend separates domain operations from HTTP and SDK adapters. Revision checks
+protect edits and publication. Moving a complete stopped repository preserves IDs,
+report history and drafts; pending local journals recover at the new location.
+PostgreSQL/S3 deployment uses the same domain contracts and has dedicated CI tests.
+
+One server token covers SDK and browser access. Clients automatically discover
+project `.cairn/token` and user `~/.config/cairn/token` files. Servers print browser
+login links at startup. The report header has one Publish action and draft status;
+Read/Edit saves drafts without publishing.
+
+Schema 11 widens PostgreSQL sizes and counters to 64-bit values. Upgrades from
+schemas 7–10 are transactional; SQLite takes a pre-upgrade database backup.
+Unsupported legacy schemas are refused unchanged instead of dropping their data.
+See [Storage architecture and migration](docs/guides/storage-architecture.md).
+
+The repository name returns to `cairn`; its Python distribution remains
+`cairn-track`. The previous artifact-store implementation is preserved separately
+as `cairn-report`. Its different storage model is not automatically converted.
+
 ## 0.6.0 — 2026-10-13
 
 Data integrity first: a run writes only its own run directory, a separate

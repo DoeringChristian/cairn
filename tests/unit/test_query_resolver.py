@@ -1,6 +1,6 @@
 """Unit tests for the server-side query resolver (no HTTP).
 
-Seeds a ``Database`` directly and exercises :mod:`cairn.server.query_resolver`
+Seeds a ``Database`` directly and exercises :mod:`cairn.backend.query_resolver`
 across every run selector mode, name globbing, tag+step addressing, param /
 metric predicates, ``at=`` pinning, and the no-match path.
 """
@@ -12,13 +12,8 @@ import json
 
 import pytest
 
-from cairn.server import ingest_ops
-from cairn.server.query_resolver import (
-    QueryError,
-    QueryNotFound,
-    parse_query_params,
-    resolve,
-)
+from cairn.backend import ingest_ops
+from cairn.backend.query_resolver import QueryError, QueryNotFound, parse_query_params, resolve
 
 
 # ---------------------------------------------------------------------------

@@ -8,8 +8,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..source_cache import SOURCE_CACHE
-from ._common import get_data_dir, get_db, require_run
+from cairn.backend.source_cache import SOURCE_CACHE
+from ._common import get_data_dir, get_db, get_blobs, require_run
 
 router = APIRouter(prefix="/api", tags=["source"])
 
@@ -19,10 +19,11 @@ def get_source_tree(run_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     dd = get_data_dir(request)
     require_run(db, run_id)
-    manifest_path = dd.sources_dir / run_id / "manifest.json"
-    if not manifest_path.exists():
-        raise HTTPException(status_code=404, detail="no source archive for run")
-    return json.loads(manifest_path.read_text())
+    from cairn.backend.sources import get
+    try:
+        return get(db, run_id)[1]
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/runs/{run_id}/source/file")
@@ -48,16 +49,15 @@ def get_source_file(
     ):
         raise HTTPException(status_code=400, detail="invalid path")
 
-    archive_path = dd.sources_dir / run_id / "tree.tar.zst"
-    if not archive_path.exists():
-        raise HTTPException(status_code=404, detail="no source archive for run")
-
-    tree = SOURCE_CACHE.get(archive_path)
-    data = tree.files.get(normalized)
+    from cairn.backend.sources import file
+    try:
+        data = file(db, get_blobs(request), run_id, normalized)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if data is None:
-        if normalized in tree.others:
-            raise HTTPException(status_code=400, detail="not a regular file")
-        raise HTTPException(status_code=404, detail="file not in archive")
+        raise HTTPException(404, 'file not in archive')
     # Try UTF-8 decode; if binary, return base64.
     try:
         text = data.decode("utf-8")

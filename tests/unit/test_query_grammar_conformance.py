@@ -1,6 +1,6 @@
 """The query grammar's mirrors may never drift.
 
-The server owns the grammar (cairn.server.query_grammar / _operators);
+The server owns the grammar (cairn.backend.query_grammar / _operators);
 cairn-track's reader carries a marked mirror. Both are pinned to the shared
 vectors fixture. The TS mirror is pinned by the same file from the UI's test
 suite.
@@ -12,14 +12,14 @@ VECTORS = json.loads((Path(__file__).resolve().parents[2] / "schema" / "query-ve
 
 
 def test_server_operator_names_match_vectors():
-    from cairn.server.query_grammar import OPERATOR_NAMES
+    from cairn.backend.query_grammar import OPERATOR_NAMES
 
     assert list(OPERATOR_NAMES) == VECTORS["operators"]
 
 
 def test_server_comparators_cover_exactly_the_vocabulary():
-    from cairn.server._operators import OPERATORS
-    from cairn.server.query_grammar import OPERATOR_NAMES
+    from cairn.backend._operators import OPERATORS
+    from cairn.backend.query_grammar import OPERATOR_NAMES
 
     assert set(OPERATORS) == set(OPERATOR_NAMES)
 

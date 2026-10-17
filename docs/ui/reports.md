@@ -1,258 +1,58 @@
 # Reports
 
-A report is a document with prose and live cards. It works like a notebook: a column of **markdown cells** and **cards cells**. Each cards cell draws its cards from a set of runs. Reports are saved on the server, so everyone with access to the project sees the same document.
-
-Open **Reports** in the project navigation (`/p/<project>/reports`). From there you can:
-
-- create a report with **+ New report**,
-- rename a report inline or delete it,
-- start a report from a saved report template (see [Templates](#templates)).
-
-Click a report to open it at `/p/<project>/reports/<id>`.
-
-## Cells
-
-Every cell has a toolbar on its top border. It shows when you hover over or focus the cell, and is always visible on touch screens. The toolbar has **move up**, **move down**, **comment** and **delete**. To insert a cell, hover over the gap between two cells, or below the last one, and pick **+ Markdown** or **+ Cards**. The gap below the last cell is always shown.
-
-### Markdown cells
-
-Click a rendered markdown cell to edit it. The whole cell turns into one text area. It renders again when you press ++shift+enter++, ++ctrl+enter++ / ++cmd+enter++ or ++escape++, or when you click elsewhere. A new, empty cell opens in edit mode.
-
-Cells render the same Markdown as `cairn.Markdown` cards and run notes: GitHub-flavoured Markdown plus most of Pandoc's Markdown. The full support matrix is in [Logging media › Markdown](../guides/media.md#markdown). In short:
-
-Math
-:   KaTeX, with Pandoc's rules. `$E = mc^2$` and `\(E = mc^2\)` are inline math; `$$…$$` and `\[…\]` are display math, also inside a line. A `$` that doesn't open valid math stays a dollar sign, so `$5 and $10` is text. `\begin{align}` … `\end{align}` blocks and `\newcommand` macro blocks work too.
-
-Pandoc extensions
-:   Footnotes (`[^1]`, inline `^[…]`), definition lists, fenced divs (`::: note` … `:::`), bracketed spans (`[text]{.smallcaps}`), header attributes (`# Title {#id}`), `^superscript^` and `~subscript~`, smart punctuation, implicit figures, line blocks (`| …`), fancy and example lists (`a.`, `(i)`, `(@)`), and citations (`[@key]`, shown as written).
-
-Callouts
-:   GitHub-style alerts. The kinds are `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION`, in any case. Text after the marker becomes the title. Add `-` or `+` after the marker to make the callout collapsible, starting closed or open. A Pandoc fenced div with one of these classes is a callout too, titled by its `title` attribute.
-
-    ```markdown
-    > [!TIP] Faster training
-    > Mixed precision halves the step time here.
-
-    > [!WARNING]-
-    > Folded until clicked.
-
-    ::: {.note title="Setup"}
-    All runs use 8 GPUs.
-    :::
-    ```
-
-Raw HTML is never rendered. A `<script>` or any other tag shows as plain text.
-
-### Images
-
-Paste images into a markdown cell, or drag them onto it, in edit mode or while it is rendered. PNG, JPEG, GIF and WebP are accepted, up to 20 MB each. The server checks the file bytes and ignores the declared type.
-
-- While a file uploads, a placeholder `![Uploading <name>…]()` marks where it will go.
-- When the upload finishes, the placeholder becomes `![](cairn-asset:<sha256>)`.
-- If an upload fails, its placeholder is removed and an error stays under the cell until you dismiss it.
-
-The image belongs to the report's asset store, so share-link viewers can see it too.
-
-### Cards cells
-
-A cards cell shows live cards for the runs of its **run sets**. A run set is the workspace's runs table, frozen: a filter (with latest versions only), grouping, sort and eyes, stored in the report. Its runs are resolved each time the report is opened, so a new run that matches shows up without editing the report. The cards draw the union of the sets' runs; with more than one set, each set's runs are drawn in their own colour family. A new cell starts with one run set of the project's 10 newest runs. See [Report blocks](../reference/report-blocks.md#runsets) for every field.
-
-The cards group as their run sets do, as the project workspace's cards follow its sidebar: a card whose **Group runs** is **Workspace** *(default)* draws one line per innermost group of its run's set (labelled `group: exp-44, jobType: train`), and one line per run when the set is not grouped. With several sets each set keeps its own groups, prefixed with the set's name (`Seeds › group: exp-44`), so groups of different sets never merge; a run in several sets counts in its first. **Off** and **By key** work as everywhere else (see [Line plot](cards.md#line-plot-scalar)). A share link draws the same lines.
-
-The cell's toolbar adds two buttons:
-
-- **+ (Add card)** opens the card picker. The run sets must match some runs first.
-- **Runs** (the sliders icon, with the run count) opens *Runs in this cell*, the list of the cell's run sets:
-
-    ```
-    ┌ Run sets ──────────────────────────────────────────────┐
-    │ ● lr sweep        12 runs    [Edit] [✕]                │
-    │ ● baselines        2 runs    [Edit] [✕]                │
-    │ + Add run set        ⤓ Insert from workspace           │
-    └────────────────────────────────────────────────────────┘
-    ```
-
-    Each row has the set's colour family dot, its name, how many runs it resolves to now, **Edit** and **✕** (removes the set; the last set cannot be removed). In view mode and on a share link the list is read-only, and a share link's sets show the runs the server resolved.
-
-    - **Edit** opens the set's **Name** and the [project workspace](project-workspace.md#runs-sidebar)'s runs sidebar over the project's runs, scoped to the set: **Filter** (its **Latest versions only** is the set's `latestOnly`), **Group**, **Sort** and the eyes change the set (and the cards, right away). **Status** and **Search** only narrow what the editor lists: a run set has neither. **← Run sets** goes back to the list.
-    - **+ Add run set** adds a set of the project's 10 newest runs, named `Run set N`.
-    - **⤓ Insert from workspace** adds a set copying the workspace's current view: its filter (with **Latest versions only**, the set's `latestOnly`), grouping, sort and eyes, named after the view. In a cell without cards it also copies the cards of the workspace's layout (with their settings), over the cell's runs.
-    - **Reset cards from runs** throws away the cell's cards and creates one card per metric across its runs.
-
-When the resolved runs change, the cell rebinds its existing cards to them. Your cards and their order stay as they are.
-
-You can drag cards within a cell to reorder them. Card settings work as they do everywhere else (see [Cards](cards.md)). Every settings change is saved with the report. The media controls above the cards (step slider sync) apply to that cell only.
-
-!!! note "Report cards ignore workspace defaults"
-    Report cards resolve settings from the built-in defaults and their own overrides only. Workspace and section defaults ([Workspace](workspace.md)) do not apply, so a report looks the same to everyone.
-
-## The markdown source
-
-A report is stored as one markdown document. Prose is kept as written. Each cards cell becomes a fenced ```` ```cairn ```` block of YAML listing its run sets, cards and each card's settings overrides:
-
-````markdown
-## Validation
-
-Loss keeps falling after the learning-rate drop.
-
-```cairn
-runSets:
-  - name: ResNets
-    filter: { kind: group, op: and, children: [{ kind: chip, field: display_name, op: startswith, arg: resnet- }] }
-    latestOnly: true
-cards:
-  - metric: val.loss
-    type: scalar
-    settings: { yScale: log }
-  - type: parallel
-```
-````
-
-The full schema is in [Report blocks](../reference/report-blocks.md).
-
-Click **View source** to see the exact markdown a save would write. It is read-only: you edit cells, not the source. If you type a ```` ```cairn ```` fence into a markdown cell, it is saved as written. The next time the report loads, it becomes a cards cell.
-
-A fence in the format from before run sets (`runs:` with fixed ids or a selector) is not read: the cell shows empty with a notice, and its fence is kept as written until you edit the cell.
-
-### Cells with errors
-
-A ```` ```cairn ```` block that does not compile shows as an error cell with the message. The block is saved exactly as written and is never rewritten on its own. Its toolbar only offers move and delete.
-
-A `metric:` card without `type:` gets its type from the metrics the cell's runs have logged. The editor parses the report before those are loaded. Such a cell therefore shows *Loading…*, then compiles again once the run's metric list is available. The recompiled cards are only displayed. They reach the saved report the next time you edit that cell.
-
-## Headings and table of contents
-
-Headings in markdown cells form the report's outline:
-
-- Each heading gets an anchor: a GitHub-style slug of its text, or the id from a header attribute (`## Results {#results}`). A `#slug` link opens the report scrolled to that heading, and a `[link](#slug)` in the text scrolls to it.
-- A table of contents lists the headings. On wide screens it is a sticky column beside the report. On phones it is a floating **Contents** button.
-- A heading whose section spans later cells gets a collapse chevron. Collapsing it hides the cells up to the next heading of the same or a higher level.
-
-Collapsed sections are remembered per browser (localStorage) and are not part of the document. Anyone, share-link viewers included, can collapse sections without changing the report. Clicking a TOC entry expands any collapsed section that hides the heading.
-
-## Saving and conflicts
-
-Reports autosave about 1.5 seconds after your last change, and again when you leave the page. Press ++ctrl+s++ / ++cmd+s++ to save immediately. The status next to the title shows *saving…*, *saved · updated …*, *save failed*, or *changed elsewhere*.
-
-Each save only succeeds if the report is still the version you loaded. The server rejects a save with **409** if someone else changed the report in the meantime. The editor then handles it in one of two ways:
-
-- **Only new cells were appended** (for example with *Add to report* from another page). The editor adds those cells to your copy and saves again. Your edits and theirs are both kept.
-- **Anything else changed.** The editor stops saving and shows *changed elsewhere — reload to see it (your edits are kept here)*. Your local edits stay on screen, but reloading replaces them with the server's version.
-
-Every cell edit, insert, move and delete is an undo step. Undo and redo work as described in [Keyboard shortcuts](shortcuts.md).
-
-## Adding cards from elsewhere
-
-- **Add to report** on any card header lists the project's reports and offers to create a new one. It appends a new cards cell to the end of the report, containing a copy of the card with its settings inlined. Existing text is never rewritten. If the report changes during the append, the button reads it again and retries once, then reports an error.
-- **Send section to a new report** in a section header (run page or project workspace) creates a new report with a heading, a short intro and one cards cell holding the section's panels as cards, with their settings, over one run set of exactly the runs the workspace shows (`run.id in [...]`).
-
-In each case the source cards are left unchanged.
-
-## Comments
-
-Click **Comments** in the report header to open the comment panel. The button shows the number of open threads. You can comment on four things:
-
-| Anchor | How to comment |
-| --- | --- |
-| The whole report | The box at the top of the comment panel. |
-| A cell | The comment button in the cell toolbar. |
-| A card | The comment button in the card header. |
-| A passage of text | Select text in a rendered markdown cell and click the **Comment** button that appears. |
-
-- Cells and cards with open threads show a count badge. Click it to open their threads.
-- Threads are one level deep: a first comment and its replies.
-- Anyone with the write role can comment, reply, resolve or reopen a thread.
-- Only a comment's author or an admin can edit or delete it. Deleting a thread's first comment deletes the whole thread.
-
-The panel lists report-level threads first, then the rest in document order; click a thread's label to scroll to it. Threads whose card, cell, heading or quoted text no longer exists are listed separately as **detached**. Use the filter to show open, resolved or all threads.
-
-!!! info "How cell anchors survive edits"
-    - A cards cell is anchored by its block id (`id:` in the fence).
-    - A markdown cell is anchored by its first heading, or by its first line when it has no heading.
-    - A text comment is anchored by its quote and the section it is in.
-
-    Rewording a heading or a quoted passage detaches the thread.
-
-## Export
-
-Export PDF
-:   Waits until every card has finished loading, then opens the browser's print dialog. Choose *Save as PDF* as the destination. App chrome, toolbars and insert gaps are hidden in print.
-
-Export LaTeX
-:   Draws every card with all sections expanded and folded callouts open, then downloads `<title>.zip` with:
-
-    - `report.tex`: prose converted from the same markdown pipeline the app uses, and one figure per card captioned with the card's title,
-    - `figures/card-<n>.png`: one PNG captured per card,
-    - `assets/<hash>.<ext>`: the images uploaded into the report.
-
-    Images from other URLs become links. A banner lists any card that had no chart to capture.
-
-    How the prose maps to LaTeX:
-
-    | Markdown | LaTeX |
-    |---|---|
-    | `$…$`, `\(…\)` | `\(…\)` |
-    | `$$…$$`, `\[…\]` | `\[…\]` |
-    | `\begin{align}` … and other raw TeX blocks, macro blocks | as written (`\DeclareMathOperator` becomes a `\newcommand`) |
-    | `# Title {#id}`, `## Aside {-}` | `\section{Title}\label{id}`, `\subsection*{Aside}` |
-    | `[text](#id)` | `\hyperref[id]{text}` |
-    | Footnotes, inline notes | `\footnote{…}` |
-    | Definition lists | `description` |
-    | Callouts (`> [!NOTE]`, `::: note`) | a `quote` headed by the title in bold |
-    | Other fenced divs, spans | their content; `.smallcaps` → `\textsc`, `.underline` → `\uline` |
-    | `^sup^`, `~sub~` | `\textsuperscript`, `\textsubscript` |
-    | Implicit figures | `figure` with `\caption` |
-    | Line blocks | lines joined by `\newline` |
-    | `a.`, `i.`, … lists | `enumerate` with matching labels |
-    | `[@key; @other]` | `\cite{key,other}` (add your own bibliography) |
-
-From the command line, `cairn report show ID` prints the markdown source and
-`cairn report export ID -o report.md` writes it to a file. LaTeX and PDF
-capture the rendered cards, which takes a browser, so they are only in the UI.
-
-## From the command line
-
-`cairn report` works on a server or on a local repo (through its server, started when needed; see
-[Client commands](../guides/server.md#client-commands)). A report is named by
-its id alone (the last part of its URL, `/p/<project>/reports/<id>`).
-
-```bash
-cairn report ls                         # every project's reports; --project P for one
-cairn report show 3f2a9c1d0b7e6a55      # the markdown source, to stdout
-cairn report export 3f2a9c1d0b7e6a55 -o findings.md
-cairn report rm 3f2a9c1d0b7e6a55        # with its comments, images and share links
-
-cairn report pull 3f2a9c1d0b7e6a55 -o findings.md   # the source, and remembers its version
-cairn report push findings.md                       # updates that report
-cairn report push ablation.md --project my-proj     # creates a new one (named by its first # heading)
-
-cairn report share 3f2a9c1d0b7e6a55 --expires 7d   # prints the link, once
-cairn report shares 3f2a9c1d0b7e6a55               # the links' ids and state
-cairn report unshare 3f2a9c1d0b7e6a55 9c4e1f20a3b85d77
-```
-
-`pull` and `push` keep a hidden `.<file>.cairn.json` next to the file (the report's id,
-project and the version pulled). `push` refuses to overwrite a report that changed since
-(edited in the UI or pushed by someone else) and says so; pull again and merge, or pass
-`--force`. `--id` pushes to another report, `--name` renames it. This is how scripts and
-agents write reports. From Python, `cairn.Reader().reports(project)` lists reports and
-`.report(id).source` reads one.
-
-`ls` and `shares` take `--format table|json`. Share links need a server with
-authentication on and the write role (see [Sharing](sharing.md)): against a
-`--no-auth` server the share commands stop with an error that says so. A local
-repo's background server has auth on, so they work there too.
-
-## Templates
-
-**Save as template** stores the report's cards (type, metrics, settings) as a report template. On the Reports page, pick a template, choose runs, and click **New from template**. This creates a new report whose cards are matched to those runs. A banner reports how many of the template's cards could be restored. If none match, no report is created.
-
-## Read-only viewing
-
-A user whose token has the **read** role sees reports in view mode:
-
-- There is no structure editing, image upload, comment panel or share button.
-- Markdown renders only.
-- Cards can still be explored: zoom, step through, change settings, toggle hide/pin/baseline. These changes stay in that browser session and are never saved.
-
-To show a report to someone with no account, use a [share link](sharing.md).
+Reports are the default project page. Each report is an artifact family with
+immutable published versions containing source, evidence, environment details,
+notebook outputs and the rendered document. The publication picker opens any
+retained version; editing never changes the version someone is already reading.
+
+Choose **New report** on the project's reports page to start writing immediately.
+A draft named **NewReport** opens with a blank Markdown cell; change its title in
+the notebook metadata whenever you are ready. Write Markdown and Python, run
+cells, then publish the first version directly from the browser.
+
+The book/pencil toggle switches between reading and editing. The notebook editor
+has Markdown, Python, metadata and card cells, with syntax highlighting, search,
+undo, automatic indentation and keyboard shortcuts. Edit prose inline, insert or
+remove cells, or switch to source files for direct QMD editing. An explicit
+**Make a copy** creates a separate report family. Notebook and source-file edits
+autosave. One header shows draft save status and **Publish**. Switching to Read or
+between editor views waits for the draft to save; a failed save keeps your edits.
+**Run all** stays with the notebook execution controls.
+
+Running a Python cell first executes its required upstream cells. Unchanged
+prefixes can reuse a live kernel; upstream edits mark dependent output stale.
+Saved execution results and caches survive server restarts, and idle kernels
+close automatically. Publishing performs a complete build against captured
+source, pinned inputs and a resolved environment, then adds a new version.
+The **Publish** button shows progress above the editor and stays
+disabled until the build finishes. Progress survives a reload. Success refreshes
+the current version and publication history; failure leaves the published report
+unchanged and shows the error with build diagnostics. Repeated requests for the
+same active build reuse that build. Concurrent stale source saves or publications
+fail instead of overwriting work.
+
+For external authoring, create `reports/<slug>/report.qmd` with
+`cairn report new <slug>`. YAML frontmatter declares inputs and environment;
+`{python}` fences execute code. `cairn report publish <slug>` builds locally;
+`--execution server --server URL` builds on the selected server. There is no
+required AI integration and no Quarto runtime dependency.
+
+Inputs use `run:<full-id>` for finished runs and
+`artifact:<project>/<name>:vN` for artifacts. The build captures immutable run
+snapshots and resolves artifact aliases before execution. Copies retain those
+exact references. Captured run evidence includes structured `records.jsonl`,
+metric projections, media, configuration and summaries.
+
+The reader includes Markdown, math, citations, callouts, tables, Plotly, images,
+audio, video, captured cards and custom viewers. Plotly figures show the standard
+Plotly toolbar. Card actions use camera, settings and overflow icons; source
+references and other secondary actions live in the overflow menu. File inspection,
+publication history and standalone HTML/bundle downloads are report-level actions.
+Copy reference produces an editor-ready source location and Markdown quotation,
+for example `reports/study/report.qmd:42 "The result is $x^2$."`. Included files
+retain their own paths and line numbers. Media references retain the selected
+time, clip or region without copying the media payload.
+
+The × deletes a report from the project list. Authentication uses the server's
+single token; reports do not introduce separate credentials. Python execution
+runs trusted author code on the selected machine, outside an OS security sandbox.

@@ -1,7 +1,7 @@
 """Custom viewers from Python: publish a viewer folder, run its dev loop.
 
 A viewer is a folder with a ``cairn-viewer.json`` manifest and ES modules
-(see ``cairn.server.viewer_manifest`` and the custom viewers guide). Publishing
+(see ``cairn.backend.viewer_manifest`` and the custom viewers guide). Publishing
 logs it as a version of the artifact family ``<manifest name>`` of type
 ``cairn-viewer``, with the normalized manifest and the folder's content digest
 in the version's metadata; an unchanged folder is not published again.
@@ -17,14 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ..server.viewer_manifest import (
-    MANIFEST_FILE,
-    VIEWER_TYPE,
-    ManifestError,
-    content_digest,
-    folder_files,
-    load_folder,
-)
+from cairn.backend.viewer_manifest import MANIFEST_FILE, VIEWER_TYPE, ManifestError, content_digest, folder_files, load_folder
 from .artifacts import Artifact, ArtifactVersion
 
 
@@ -36,8 +29,8 @@ def publish_folder(
     """Publish ``path`` unless ``latest`` already has its content and
     declares the same ``default_for`` (shared by ``publish_viewer`` and
     ``Run.use_viewer``)."""
-    from ..server.viewer_defaults import normalize_default_for
-    from .run import log_draft
+    from cairn.backend.viewer_defaults import normalize_default_for
+    from .run_artifacts import log_draft
 
     manifest, files = load_folder(path)
     name = manifest["name"]
@@ -66,7 +59,7 @@ def publish_folder(
         name, type=VIEWER_TYPE, description=manifest["description"],
         metadata={
             "manifest": manifest, "content_digest": digest,
-            # The server makes it the default viewer of these kinds (cairn.server.viewer_defaults).
+            # The server makes it the default viewer of these kinds (cairn.backend.viewer_defaults).
             **({"default_for": declared} if declared else {}),
         },
     )
@@ -123,10 +116,10 @@ def publish_viewer(
         ValueError: A ``default_for`` kind the viewer does not accept.
     """
     from . import handlers as _handlers  # noqa: F401  (register built-ins)
-    from ..server.routes._common import slugify
+    from cairn.backend.common import slugify
     from .connect import open_writer
     from .handlers.registry import default_registry
-    from .run import backend_for_transport
+    from .run_artifacts import backend_for_transport
 
     transport, _server = open_writer(repo)
     try:

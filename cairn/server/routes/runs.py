@@ -9,12 +9,14 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .. import auth, config_doc
-from ..storage.db import Database
-from ..run_query import RUN_LIST_COLUMNS, RunQueryError, docs_by_run, select_runs
-from ..metric_rules import resolved_values
-from .. import artifact_registry_ops as artifact_ops
-from ._common import api_run_row, get_db, require_run
+from cairn.server import auth
+from cairn.backend import config_doc
+from cairn.backend.storage.db import Database
+from cairn.backend.run_query import RUN_LIST_COLUMNS, RunQueryError, docs_by_run, select_runs
+from cairn.backend.metric_rules import resolved_values
+from cairn.backend import artifact_registry_ops as artifact_ops
+from cairn.backend.common import api_run_row
+from cairn.server.routes._common import get_db, require_run
 from .artifact_registry import with_files
 from .sequences import sequence_catalogues
 
@@ -139,110 +141,20 @@ def query_runs(body: RunQueryBody, request: Request) -> dict[str, Any]:
     return {"runs": rows, "total": total}
 
 
-def _params_by_run(db: Database, run_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Each run's params as ``{key: decoded value}``, one query for the page."""
-    if not run_ids:
-        return {}
-    holes = ",".join("?" * len(run_ids))
-    out: dict[str, dict[str, Any]] = {rid: {} for rid in run_ids}
-    for r in db.read_columns(
-        f"SELECT run_id, key, value FROM params WHERE run_id IN ({holes})",
-        list(run_ids),
-    ):
-        out[r["run_id"]][r["key"]] = json.loads(r["value"])
-    return out
 
 
-def _metric_stats(
-    db: Database, run_ids: list[str]
-) -> dict[str, dict[str, dict[str, Any]]]:
-    """Per run, per scalar metric: ``{count, first, last, min, max, mean,
-    first_step, last_step}``.
-
-    One query for the whole page, over ``metric_stats`` (maintained at
-    ingest; see ``storage/metric_stats.py``). ``first``/``last`` are the
-    values at the lowest/highest step. Points without a scalar value (media,
-    NaN) are ignored, so non-scalar sequences never appear. The metric's
-    rule is the project's (``GET /api/projects/{p}/metric-rules``).
-    """
-    if not run_ids:
-        return {}
-    holes = ",".join("?" * len(run_ids))
-    out: dict[str, dict[str, dict[str, Any]]] = {rid: {} for rid in run_ids}
-    for r in db.read_columns(
-        f"""SELECT run_id, name, count, first_value AS first, last_value AS last,
-                   min, max, sum / count AS mean, first_step, last_step
-              FROM metric_stats
-             WHERE run_id IN ({holes})""",
-        list(run_ids),
-    ):
-        rid, name = r.pop("run_id"), r.pop("name")
-        out[rid][name] = r
-    return out
 
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str, request: Request) -> dict[str, Any]:
-    details = run_details(get_db(request), [run_id], share=auth.request_share(request) is not None)
+    details = run_details(get_db(request), [run_id], share=False)
     if run_id not in details:
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
     return details[run_id]
 
 
-def _rows_by_run(db: Database, sql: str, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-    """``sql`` (``... WHERE run_id IN ({holes}) ...``, selecting ``run_id``
-    first) per run, the ``run_id`` column dropped, one query per 500 runs."""
-    out: dict[str, list[dict[str, Any]]] = {rid: [] for rid in run_ids}
-    for i in range(0, len(run_ids), 500):
-        chunk = run_ids[i:i + 500]
-        for r in db.read_columns(sql.format(holes=",".join("?" * len(chunk))), chunk):
-            out[r.pop("run_id")].append(r)
-    return out
 
 
-def run_details(db: Database, run_ids: list[str], *, share: bool = False) -> dict[str, dict[str, Any]]:
-    """``{run_id: GET /api/runs/{id} body}`` for the runs that exist (an
-    unknown id is left out), a few queries for the lot. ``share``: the
-    caller is a share link, which never sees a run's environment."""
-    runs: dict[str, dict[str, Any]] = {}
-    for i in range(0, len(run_ids), 500):
-        chunk = run_ids[i:i + 500]
-        for row in db.read_columns(f"SELECT * FROM runs WHERE id IN ({','.join('?' * len(chunk))})", chunk):
-            runs[row["id"]] = api_run_row(row)
-    ids = [rid for rid in run_ids if rid in runs]
-    if not ids:
-        return {}
-    docs = docs_by_run(db, ids)
-    params = _rows_by_run(
-        db, "SELECT run_id, key, value, value_type FROM params WHERE run_id IN ({holes}) ORDER BY run_id, key", ids,
-    )
-    summary = _rows_by_run(
-        db, "SELECT run_id, key, value, value_type FROM summary WHERE run_id IN ({holes}) ORDER BY run_id, key", ids,
-    )
-    metric_defs = _rows_by_run(
-        db, "SELECT run_id, name, x, summary FROM metric_defs WHERE run_id IN ({holes}) ORDER BY run_id, name", ids,
-    )
-    values = resolved_values(db, ids)
-    stats = _metric_stats(db, ids)
-    out: dict[str, dict[str, Any]] = {}
-    for rid in ids:
-        run = runs[rid]
-        if share:
-            run.pop("env_snapshot", None)
-        run["values"] = values[rid]
-        run["stats"] = stats[rid]
-        d = docs.get(rid, {})
-        out[rid] = {
-            "run": run, "params": params[rid], "summary": summary[rid], "metric_defs": metric_defs[rid],
-            # The nested documents as logged; ``params`` / ``summary`` are their
-            # flat index. A summary MEDIA value is its marker leaf
-            # ``{"$media": {hash, object_type, mime_type, caption?}}`` (the
-            # Overview shows a thumbnail of it); it has no flat row, and it is
-            # also a series of the run (``/sequences``, ``"summary": true``).
-            "config_doc": config_doc.json_safe(d.get("config", {})),
-            "summary_doc": config_doc.json_safe(d.get("summary", {})),
-        }
-    return out
 
 
 #: Most runs one ``POST /api/runs/batch`` may ask for (the UI sends 200).
@@ -276,14 +188,9 @@ def runs_batch(body: RunsBatchBody, request: Request) -> dict[str, Any]:
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown include {unknown}; one of {list(RUNS_BATCH_PARTS)}")
     ids = list(dict.fromkeys(body.ids))
-    grant = auth.request_share(request)
     forbidden: list[str] = []
-    if grant is not None:
-        scope = auth.share_scope(request, grant)
-        forbidden = [rid for rid in ids if rid not in scope.run_ids]
-        ids = [rid for rid in ids if rid in scope.run_ids]
     db = get_db(request)
-    details = run_details(db, ids, share=grant is not None)
+    details = run_details(db, ids, share=False)
     found = [rid for rid in ids if rid in details]
     out: dict[str, dict[str, Any]] = {rid: {} for rid in found}
     if "run" in body.include:
@@ -311,3 +218,52 @@ def get_run_documents(run_id: str, request: Request) -> Response:
     row = db.read_one("SELECT config, summary FROM runs WHERE id = ?", [run_id])
     body = '{"config":%s,"summary":%s}' % (row[0] or "{}", row[1] or "{}")
     return Response(content=body, media_type="application/json")
+
+from cairn.backend.run_reads import _params_by_run, _metric_stats, _rows_by_run, run_details
+
+
+@router.get('/runs/{run_id}/snapshot')
+def snapshot_run(run_id: str, request: Request, revision: str | None = None):
+    from cairn.backend.snapshots import capture_run
+    try:
+        return capture_run(get_db(request), run_id, revision)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+class RunEditBody(BaseModel):
+    expected_revision: int
+    changes: dict[str, Any]
+    delete: dict[str, list[str]] | None = None
+
+
+def _edit_call(function, *args, **kwargs):
+    from cairn.backend.revisions import RevisionConflict
+    try:
+        return function(*args, **kwargs)
+    except RevisionConflict as exc:
+        raise HTTPException(409, {'message': str(exc), 'revision': exc.actual}) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get('/runs/{run_id}/edit')
+def read_edit(run_id: str, request: Request):
+    from cairn.backend.run_edits import read
+    return _edit_call(read, get_db(request), run_id)
+
+
+@router.patch('/runs/{run_id}/edit')
+def edit_run(run_id: str, body: RunEditBody, request: Request):
+    from cairn.backend.run_edits import edit
+    return _edit_call(edit, get_db(request), run_id, **body.model_dump())
+
+
+@router.get('/runs/{run_id}/revisions')
+def run_revisions(run_id: str, request: Request, limit: int = 100, before: int | None = None):
+    from cairn.backend.revisions import history
+    return {'revisions': history(get_db(request), 'run', run_id, limit=limit, before=before)}

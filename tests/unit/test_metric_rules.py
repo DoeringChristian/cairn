@@ -12,10 +12,10 @@ import cairn
 
 def _final_metric(db, run_id, name):
     return resolved_values(db, [run_id])[run_id].get(name)
-from cairn.server import ingest_ops
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
-from cairn.server.metric_rules import project_rules, resolved_values
+from cairn.backend import ingest_ops
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
+from cairn.backend.metric_rules import project_rules, resolved_values
 from tests.conftest import ingest_repo
 
 QUIET = dict(
@@ -162,8 +162,7 @@ def test_rules_are_scalar_only(tmp_path):
 def test_disabled_run_swallows_rules():
     run = cairn.Run(project="p", mode="disabled")
     run.track(1.0, "loss", 0, summary="min", x="epoch")
-    assert not hasattr(run, "define_metric")
-    assert not hasattr(cairn.Run, "define_metric")
+    run.define_metric("loss", summary="min", step_metric="epoch")
 
 
 def test_resolution_order_and_exact_names(fresh_db):

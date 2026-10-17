@@ -7,7 +7,7 @@ and so does a list of them (a gallery, the same rules as ``Run.track``).
 
 Here the values are uploaded like tracked media and replaced by marker
 leaves ``{"$media": {"hash", "object_type", "mime_type", "caption"?}}``
-(``cairn.server.config_doc``); the server keeps each marker's value as the
+(``cairn.backend.config_doc``); the server keeps each marker's value as the
 one point (step 0) of a series named by the key's dotted path, flagged
 ``summary`` (``ingest_ops.write_doc``), which is how cards show it.
 
@@ -20,8 +20,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ..server import config_doc
-from ..server.ingest_ops import stepped_conflict
+from cairn.backend import config_doc
+from cairn.backend.ingest_ops import stepped_conflict
 from .gallery import GALLERY_MIME, resolve_gallery
 from .uploads import upload_gallery, upload_value
 from .wrappers import _TypeWrapper

@@ -99,27 +99,14 @@ def test_context_manager_records_failed_on_exception(server, reader):
     assert status == "failed"
 
 
-def test_nested_run_raises(server):
-    run = cairn.Run(
-        project="p",
-        capture_source=False,
-        capture_stdout=False,
-        capture_env=False,
-        capture_system_metrics=False,
-        server=server,
-    )
-    try:
-        with pytest.raises(RuntimeError, match="Nested"):
-            cairn.Run(
-                project="p",
-                capture_source=False,
-                capture_stdout=False,
-                capture_env=False,
-                capture_system_metrics=False,
-                server=server,
-            )
-    finally:
-        run.finish()
+def test_independent_explicit_runs_are_supported(server):
+    # Each run owns its lifecycle when stdout capture is disabled.
+    kwargs = dict(capture_source=False, capture_stdout=False, capture_env=False,
+                  capture_system_metrics=False, server=server)
+    with cairn.Run("p", **kwargs) as first, cairn.Run("p", **kwargs) as second:
+        first.log({"loss": 1.0})
+        second.log({"loss": 2.0})
+        assert first.id != second.id
 
 
 def test_log_artifact(server, reader):

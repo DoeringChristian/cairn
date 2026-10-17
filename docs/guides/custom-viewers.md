@@ -4,7 +4,7 @@ A custom viewer is browser code you write to draw data that no built-in card sho
 distribution on a sphere, a volume renderer, a bespoke diff. You log the data once with
 `cairn.Data` under a `kind`; a viewer (a folder in your repo with a `cairn-viewer.json` manifest
 and ES modules) declares the kinds it accepts and is published to a project. Cards then draw the
-data with it, with the step slider, galleries, comparisons, section sync, reports and share links
+data with it, with the step slider, galleries, comparisons, section sync, reports
 working as for built-in cards.
 
 Viewer code runs only in the browser, in a sandboxed frame with no network and no access to the
@@ -29,12 +29,12 @@ viewers/hist/
   README.md           # the logging snippet
 ```
 
-Start the UI, then serve the folder live to it. `cairn viewer dev` sends files to a server: with a
-local repo, the server serving it (started when none runs); otherwise pass `--server URL`.
+Start the UI explicitly, then serve the folder live to its HTTP endpoint.
+`cairn viewer dev` requires a server URL; it does not start a server for a local path.
 
 ```bash
 cairn ui --repo .cairn                      # http://localhost:4301
-cairn viewer dev viewers/hist --project P   # finds that cairn ui (or: --server http://localhost:4301)
+cairn viewer dev viewers/hist --project P --server http://localhost:4301
 ```
 
 Log data of that kind:
@@ -344,9 +344,9 @@ Series) stores `viewer_version: N` in the card's settings.
 ### Live development
 
 `cairn viewer dev` scans the folder every `--interval` seconds and sends changed files to the
-server. It needs write access on the target's server: a local repo
-(`--repo`, `CAIRN_REPO`, `./.cairn`) connects to the server serving it, as every command does,
-and starts one when none runs. Each complete change bumps the source's revision, and open cards reload their frames
+server. Pass its URL with `--server URL` and provide the server token when
+authentication is enabled. For local development, start `cairn ui` explicitly
+and pass its loopback URL. Each complete change bumps the source's revision, and open cards reload their frames
 (the UI polls the viewer list every 2 s while a dev source exists). While the dev source lives it
 wins over the published viewer of the same name in every card that does not pin a version. An invalid manifest is reported in the command's output and the last valid one stays
 in use. Ctrl-C removes the source; otherwise it expires 30 s after the command stops. Dev sources
@@ -396,8 +396,7 @@ Cairn ships viewers with the UI, named `cairn.<name>`, in every project without 
 | `cairn.volume` (Volume (ray marching)) | `volume` | `volume` |
 
 They are listed with the project's viewers (marked built-in), show in the **Type** tab, the
-**Viewer** setting of reports and the Defaults page like any viewer, and are always available to reports and
-share links. Viewer names starting with `cairn.` are reserved. In a browser without WebGL2 a
+**Viewer** setting of reports and the Defaults page like any viewer, and are always available to reports. Viewer names starting with `cairn.` are reserved. In a browser without WebGL2 a
 volume card falls back to offering each step's `.npz` for download.
 
 ## How cards pick a viewer
@@ -422,7 +421,7 @@ list offers **Default (<name>)** (the kind's default viewer; a built-in type sho
 `Volume (default: …)`) and every viewer that accepts all of the card's data (by title, with its
 icon) next to the built-in types, each as a live tile, and the card changes at once. The
 viewer's own settings sit in the tabs and sections their manifest names; Values › Series has **Version** (latest or a published `vN`), and Values › Compare has the
-reference. (In reports and share links, which have no Data and Type tabs, Values › Series also has
+reference. (In reports, which have no Data and Type tabs, Values › Series also has
 **Viewer**.)
 
 ## Galleries, comparisons and sync
@@ -456,17 +455,14 @@ So give a WebGL viewer a `snapshot()` that draws and reads back in one go:
 snapshot(() => { draw(); return renderer.domElement.toDataURL("image/png"); });
 ```
 
-## Reports and share links
+## Reports
 
-Custom cards go into [reports](../ui/reports.md) like any card. **Export PDF** prints each frame
-as its `snapshot()` (a frame's own WebGL canvas may print blank), and **Export LaTeX** writes each
-custom card's snapshot as its figure; both wait until the frames have rendered.
+Custom cards go into [reports](../ui/reports.md) like other cards. A publication
+captures its custom viewer, dependencies, settings and input data, so later viewer
+changes do not change the published report. Live development sources are excluded.
 
-A [share link](../ui/sharing.md) of a report can load the viewers its cards use: the version a
-card names (`viewer`, pinned or `latest`), and for cards without one the `latest` of their kinds'
-default viewers (a `custom` card: also every viewer accepting custom data). Built-in viewers are
-part of the app and always load. Share principals can list and fetch only those versions, and
-never dev sources.
+[Sharing a report](../ui/sharing.md) uses the server's single access token or a
+standalone HTML export. There are no separate share principals or viewer credentials.
 
 ## Security model
 

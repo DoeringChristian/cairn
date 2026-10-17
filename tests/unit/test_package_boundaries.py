@@ -12,9 +12,9 @@ runs-table filter. Do not assert a guarantee nothing enforces.)
 The reverse direction (sdk → server) is legal in the monolith — local-mode
 runs use the storage layer directly.
 
-The second rule is the packaging one: ``cairn-track`` ships no UI. ``cairn/`` is
-the wheel payload, so it must hold Python and nothing else, and exactly one
-module may know where the viewer bundle lives.
+The browser runtime ships with the tracker so reports and their theme match.
+Browser source stays in the viewer package; executable report templates live in
+cairn/reports/template. Only cairn/viewer.py resolves the browser bundle.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def test_only_cairn_viewer_knows_where_the_ui_bundle_lives() -> None:
     """
     offenders: list[str] = []
     for p in _py_files(REPO / "cairn"):
-        if p == VIEWER:
+        if p == VIEWER or p.is_relative_to(REPO / 'cairn' / 'reports') or p == REPO / 'cairn' / 'server' / 'routes' / 'report_publications.py':
             continue
         for lineno, line in enumerate(p.read_text().splitlines(), 1):
             if line.lstrip().startswith("#"):
@@ -87,7 +87,7 @@ def test_only_cairn_viewer_knows_where_the_ui_bundle_lives() -> None:
 _UI_SUFFIXES = {".html", ".css", ".ts", ".tsx", ".js", ".mjs", ".map", ".woff2"}
 
 
-def test_the_cairn_track_wheel_payload_holds_no_ui_bytes() -> None:
+def test_tracker_sources_hold_only_report_templates_not_browser_sources() -> None:
     """`packages = ["cairn"]` ships EVERYTHING under cairn/, not just .py.
 
     The bundle was only half of it: cairn/ui/src/** rode along too — 87 .ts and
@@ -98,6 +98,7 @@ def test_the_cairn_track_wheel_payload_holds_no_ui_bytes() -> None:
         str(p.relative_to(REPO))
         for p in (REPO / "cairn").rglob("*")
         if p.is_file() and p.suffix in _UI_SUFFIXES and "__pycache__" not in p.parts
+        and not p.is_relative_to(REPO / "cairn" / "reports" / "template")
     )
     assert not strays, (
         "cairn/ is the cairn-track wheel payload; UI assets belong in "

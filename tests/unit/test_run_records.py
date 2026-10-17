@@ -32,13 +32,16 @@ QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False,
 @pytest.fixture(autouse=True)
 def env(tmp_path, monkeypatch):
     from cairn.sdk.capture import stdout as scap
+    from cairn.sdk.transport import Transport
+    monkeypatch.setattr(Transport, "_retry", lambda self, fn: fn())
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CAIRN_DIR", str(tmp_path / "cd"))
     monkeypatch.setenv("CAIRN_AGENT_DIR", str(tmp_path / "agent"))
     monkeypatch.setenv("CAIRN_UPLOADER", "off")
-    monkeypatch.setenv("CAIRN_REPO", str(tmp_path / "repo"))
-    monkeypatch.delenv("CAIRN_SERVER", raising=False)
+    monkeypatch.setenv("CAIRN_FINISH_TIMEOUT", "0")
+    monkeypatch.delenv("CAIRN_REPO", raising=False)
+    monkeypatch.setenv("CAIRN_SERVER", "http://127.0.0.1:9")
     monkeypatch.delenv("CAIRN_RUN_ID", raising=False)
     scap._active_run_id = None
     yield tmp_path
@@ -57,10 +60,10 @@ def ops(run_id: str, label: str | None = None) -> list[str]:
 def ingest(repo: Path, run_dirs: list[RunDir]) -> FakeIngest:
     """Upload ``run_dirs`` to a fake server whose apply is 0.5's ingest code
     on the repo's database (what the 0.6 server reuses)."""
-    from cairn.server.storage.blobs import BlobStore
-    from cairn.server.storage.datadir import DataDir
-    from cairn.server.storage.db import Database
-    from cairn.server.record_apply import _apply_op
+    from cairn.backend.storage.blobs import BlobStore
+    from cairn.backend.storage.datadir import DataDir
+    from cairn.backend.storage.db import Database
+    from cairn.backend.record_apply import _apply_op
 
     dd = DataDir(repo)
     db = Database.open(dd.db_path)
@@ -90,7 +93,7 @@ def test_a_run_writes_only_its_directory(env) -> None:
     assert not (env / "repo").exists()  # nothing in the repo: the server writes it
     rd = RunDir.for_run(run.id)
     meta = rd.meta()
-    assert meta["endpoint"] == "local" and meta["repo"] == str((env / "repo").resolve())
+    assert meta["endpoint"] == "http://127.0.0.1:9"
     assert meta["project_id"] == "p"
     assert ops(run.id) == ["create_run", "batch", "finish"]
     assert rd.log().finished()["status"] == "completed"
@@ -248,7 +251,7 @@ def test_a_worker_away_from_its_primary_gets_its_own_log_name(env) -> None:
 
 
 def test_resume_elsewhere_offline_is_a_clear_error(env) -> None:
-    with pytest.raises(ServerUnavailable, match="cannot reach"):
+    with pytest.raises(ServerUnavailable, match="needs"):
         cairn.Run("p", resume="nope", **QUIET)
 
 
@@ -356,6 +359,7 @@ def _stop_daemon(base: Path) -> None:
 
 def test_finish_waits_for_the_upload(env, monkeypatch, capsys) -> None:
     monkeypatch.setenv("CAIRN_UPLOADER", "on")
+    monkeypatch.setenv("CAIRN_FINISH_TIMEOUT", "15")
     monkeypatch.setenv("CAIRN_AGENT_IDLE_EXIT", "2")
     served = FakeIngest().serve()
     try:

@@ -30,11 +30,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .. import auth
-from ..storage.db import Database
-from ._common import get_db, utc_now
+from cairn.backend.storage.db import Database
+from cairn.server.routes._common import get_db
+from cairn.backend.common import utc_now
 
 router = APIRouter(prefix="/api", tags=["project-docs"])
-_write = Depends(auth.require_role("write"))
+_write = Depends(auth.require_auth)
 
 
 class WorkspacePut(BaseModel):
@@ -107,7 +108,7 @@ _LAST_VIEW = {"detail": "a project keeps at least one view"}
 
 _VIEWS_SQL = (
     f"SELECT {_DOC_COLUMNS} FROM project_docs "
-    "WHERE project_id = ? AND kind = 'view' ORDER BY created_at, rowid"
+    "WHERE project_id = ? AND kind = 'view' ORDER BY created_at, CASE WHEN id = ? THEN 0 ELSE 1 END, id"
 )
 _VIEW_SQL = (
     f"SELECT {_DOC_COLUMNS} FROM project_docs "
@@ -159,7 +160,7 @@ def _set_current(con: sqlite3.Connection, project_id: str, view_id: str) -> None
 
 def _store_default(con: sqlite3.Connection, project_id: str, now: str) -> None:
     """Store the virtual "Default" (an empty layout) when the project has no view yet."""
-    if _rows(con, _VIEWS_SQL, [project_id]):
+    if _rows(con, _VIEWS_SQL, [project_id, default_view_id(project_id)]):
         return
     con.execute(
         """INSERT INTO project_docs
@@ -181,7 +182,7 @@ def list_views(project_id: str, request: Request) -> dict[str, Any]:
     """Every view with its layout, oldest first, and the current view's id."""
     db = get_db(request)
     _require_project(db, project_id)
-    views = _view_list(project_id, db.read_columns(_VIEWS_SQL, [project_id]))
+    views = _view_list(project_id, db.read_columns(_VIEWS_SQL, [project_id, default_view_id(project_id)]))
     stored = db.read_one(
         "SELECT view_id FROM project_view_state WHERE project_id = ?", [project_id],
     )
@@ -192,7 +193,7 @@ def list_views(project_id: str, request: Request) -> dict[str, Any]:
 def get_view(project_id: str, view_id: str, request: Request) -> dict[str, Any]:
     db = get_db(request)
     _require_project(db, project_id)
-    for v in _view_list(project_id, db.read_columns(_VIEWS_SQL, [project_id])):
+    for v in _view_list(project_id, db.read_columns(_VIEWS_SQL, [project_id, default_view_id(project_id)])):
         if v["id"] == view_id:
             return v
     raise HTTPException(status_code=404, detail="view not found")
@@ -228,7 +229,7 @@ def put_view(
     with db.transaction(immediate=True) as con:
         rows = _rows(con, _VIEW_SQL, [view_id, project_id])
         if not rows:
-            if view_id != default_view_id(project_id) or _rows(con, _VIEWS_SQL, [project_id]):
+            if view_id != default_view_id(project_id) or _rows(con, _VIEWS_SQL, [project_id, default_view_id(project_id)]):
                 raise HTTPException(status_code=404, detail="view not found")
             # The virtual "Default" (rev 0): this write stores it.
             if body.base_rev != 0:
@@ -271,7 +272,7 @@ def delete_view(project_id: str, view_id: str, request: Request) -> dict[str, An
     db = get_db(request)
     _require_project(db, project_id)
     with db.transaction(immediate=True) as con:
-        ids = [v["id"] for v in _view_list(project_id, _rows(con, _VIEWS_SQL, [project_id]))]
+        ids = [v["id"] for v in _view_list(project_id, _rows(con, _VIEWS_SQL, [project_id, default_view_id(project_id)]))]
         if view_id not in ids:
             raise HTTPException(status_code=404, detail="view not found")
         if len(ids) == 1:
@@ -293,7 +294,7 @@ def put_current_view(project_id: str, body: CurrentViewPut, request: Request) ->
     db = get_db(request)
     _require_project(db, project_id)
     with db.transaction(immediate=True) as con:
-        ids = [v["id"] for v in _view_list(project_id, _rows(con, _VIEWS_SQL, [project_id]))]
+        ids = [v["id"] for v in _view_list(project_id, _rows(con, _VIEWS_SQL, [project_id, default_view_id(project_id)]))]
         if body.view_id not in ids:
             raise HTTPException(status_code=404, detail="view not found")
         _set_current(con, project_id, body.view_id)

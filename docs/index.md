@@ -1,76 +1,66 @@
-# cairn
+# Cairn
 
-cairn is an open-source, local-first ML experiment tracker. You log metrics, media, configs and
-artifacts from Python, then browse, compare and report on them in a web UI. There is no account
-and nothing to set up: by default a run writes into `./.cairn/` next to your code, and a server
-for that repo starts on its own in the background.
+Cairn records experiments and turns their evidence into versioned Markdown and
+Python reports. Reports are the main project interface; runs, observations,
+media and artifact versions remain available for investigation.
+
+## Record an experiment
 
 ```python
 import cairn
 
-run = cairn.Run("image-classification", name="baseline")
-run.config(lr=3e-4, batch_size=32)
-
-for step in range(100):
-    loss = train_step()
-    run.track(loss, "train.loss", step, summary="min")
-
-run.finish()
+with cairn.init(project="study", repo="./.cairn", config={"lr": 0.1}) as run:
+    for loss in [1.0, 0.6, 0.3]:
+        cairn.log({"loss": loss})
+    run.summary["conclusion"] = "converged"
 ```
+
+Each run has one destination. A filesystem path opens SQLite and files directly,
+without starting a server. A server URL sends durable batches over HTTP; its client
+buffer is not a second queryable repository. The same SDK and Reader work with
+either destination. See [Getting started](getting-started.md) and
+[Storage architecture and evolution](guides/storage-architecture.md).
+
+## Write and publish reports
+
+Open the UI explicitly:
 
 ```bash
-cairn ui      # opens the viewer on http://localhost:4301
+cairn ui --repo ./.cairn
 ```
 
-## Highlights
+Choose **New report** in a project and start writing. Markdown, Python and card
+cells autosave as a draft. **Read/Edit** changes the editing mode; **Publish** builds
+and adds an immutable report version. The header shows draft save status and
+publication progress. Published versions preserve their source and captured evidence.
 
-- **Local-first.** A repo is a directory with a SQLite database and a content-addressed blob
-  store. A repo you log to locally can be served to the network later without migration.
-- **Nothing lost on a crash or an outage.** Each run writes only its own
-  [run directory](guides/run-directories.md): a checksummed record log, synced every 100 ms.
-  A separate uploader sends it to the server exactly once, keeps going after the training
-  process is killed, and retries while the server is down. `cairn sync` uploads it later,
-  from any machine.
-- **Cross-device.** Run `cairn server` on one machine and log to it from others with
-  `repo="cairn://host:4300"`.
-- **Rich media.** Images (with boxes, masks, colormaps and HDR/EXR), galleries, audio, video,
-  tables with media cells, histograms, Plotly and matplotlib figures, confusion matrices and
-  PR/ROC curves, point clouds, meshes and box hierarchies.
-- **Final values you control.** `summary="min"|"max"|"mean"|"last"` picks the number each
-  metric shows in the runs table. `x="epoch"` picks the axis its charts start on. A project can
-  override a metric's summary and goal from the table header.
-- **Runs organised as in wandb.** Free names, a `group` and a `job_type` per run, nested
-  grouping (group → job type) with one aggregated chart line per group, and server-assigned
-  versions that tell re-runs apart (**Latest versions only** lists the newest).
-- **Self-logging components.** Objects that implement `__cairn_track__(self, scope)` log
-  themselves. `run.track(model, "model", step=it)` walks the whole component tree.
-- **Run lifecycle.** You can resume, rewind or fork runs, stop them from the UI, raise alerts,
-  record gradient histograms, and capture system metrics, stdout, source code and the git
-  state.
-- **Artifacts and lineage.** Versioned artifacts (objects, files, directories, external
-  references) with aliases and tags, also across projects (`other-project/name:alias`). Every
-  `use_artifact` and every run link (`uses=`) is recorded, and the project's lineage graph is
-  built from those records.
-- **Sweeps and integrations.** Grid, random and Bayesian sweeps, plus callbacks for Hugging Face,
-  Lightning, Keras and XGBoost.
-- **A full web UI.** A runs table with filters, grouping and computed columns, a project
-  workspace with a runs sidebar, run pages, parallel coordinates and parameter importance,
-  notebook-style reports with run sets, and share links. Run pages, the workspace and reports
-  also show inline in Jupyter and marimo.
+Reports can also be authored as `reports/<slug>/report.qmd`:
 
-## Where to go next
+```bash
+cairn report new study
+cairn report publish study --project study
+```
 
-| If you want to… | Read |
-|---|---|
-| Install cairn and log your first run | [Getting started](getting-started.md) |
-| Log scalars, configs and results | [Logging metrics](guides/logging.md) |
-| Log images, audio, 3D and other media | [Media and rich types](guides/media.md) |
-| Control what the runs table shows | [Final values and metric rules](guides/metric-rules.md) |
-| Resume, fork, stop or evaluate runs | [Run lifecycle](guides/runs.md) |
-| Name, group and version runs | [Organising runs](guides/organising-runs.md) |
-| Make your models log themselves | [Components and scopes](guides/scopes.md) |
-| Version datasets and models | [Artifacts and lineage](guides/artifacts.md) |
-| Run hyperparameter sweeps | [Sweeps](guides/sweeps.md) |
-| Read runs back into Python | [Reading data back](guides/reading.md) |
-| Use the browser UI | [Web UI](ui/index.md) |
-| Look up an API | [Python API](reference/python.md), [CLI](reference/cli.md) |
+See [Reports](ui/reports.md) for editing, execution, version history and source
+references, and [Report blocks](reference/report-blocks.md) for embedded cards.
+
+## Serve a repository
+
+```bash
+cairn server --repo /srv/cairn --host 0.0.0.0
+```
+
+The server and UI share one port and one token. The server creates a private token
+file when no credential is configured. Clients can use a copied token file or
+`cairn login URL`; browsers use the same credential. Local database access needs no
+token. See [Server and authentication](guides/server.md).
+
+## Documentation
+
+- [Getting started](getting-started.md): install Cairn, log a run and publish a report.
+- [Guides](guides/index.md): logging, media, artifacts, queries, sweeps and delivery.
+- [Web UI](ui/index.md): reports, project cards, workspaces and run inspection.
+- [Reference](reference/index.md): the Python API, CLI, configuration and expressions.
+- [Examples](examples.md): integrations and complete experiment workflows.
+- [Storage architecture and evolution](guides/storage-architecture.md): local and
+  server storage, supported schema upgrades, repository moves and backups.

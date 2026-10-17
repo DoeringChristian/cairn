@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..server.viewer_manifest import MANIFEST_FILE, NAME_RE, validate_kind, validate_manifest
+from cairn.backend.viewer_manifest import MANIFEST_FILE, NAME_RE, validate_kind, validate_manifest
 
 _HIST_MANIFEST = {
     "name": "__NAME__",

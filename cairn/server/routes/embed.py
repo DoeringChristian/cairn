@@ -7,7 +7,7 @@ standalone in an iframe; it looks its card descriptor up here by ``?sid=``.
   (content-hash idempotent, TTL'd; see ``cairn/server/embed_specs.py``).
 * ``GET /api/embed/specs/{sid}`` — fetch a stored spec.
 
-Both routes sit behind the router-level ``require_role("read")`` dependency
+Both routes sit behind the router-level ``require_auth`` dependency
 attached in ``app.py`` (same posture as the other ``/api`` data routes), so
 ``--no-auth`` mode is unaffected and auth-on mode is not weakened. The POST is
 a read-role, idempotent, TTL'd render-cache seed (not persistent domain data),

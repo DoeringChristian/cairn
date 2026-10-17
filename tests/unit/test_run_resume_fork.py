@@ -8,10 +8,10 @@ import json
 import pytest
 
 import cairn
-from cairn.server import artifact_registry_ops, ingest_ops
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend import artifact_registry_ops, ingest_ops
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 from tests.conftest import ingest_repo
 
 QUIET = dict(

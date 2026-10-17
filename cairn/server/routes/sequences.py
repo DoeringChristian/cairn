@@ -21,16 +21,10 @@ router = APIRouter(prefix="/api", tags=["sequences"])
 # Max rows one /updates poll returns; the client pages on ``more``.
 UPDATES_LIMIT = 5000
 
-# ``sequences`` has an implicit SQLite rowid (its PK is not WITHOUT ROWID),
-# and rows are only ever INSERT OR IGNOREd — never replaced — so the rowid is
-# a monotonic append cursor. That is what /updates pages through and what a
-# sequence read hands back as its starting point. The one exception is a
-# rewind, which deletes rows (their rowids get reused, there's no
-# AUTOINCREMENT) and bumps the run's ``data_epoch``: both endpoints return
-# it, and a client holding a cursor from another epoch starts over. The
-# other: a summary media value (``summary = 1``) is replaced or deleted when
-# its summary key is, which bumps ``data_epoch`` the same way.
-_POINT_COLUMNS = """s.rowid AS _rowid,
+# Each event has a database-generated monotonic identity on both backends.
+# Rewind and summary replacement still bump data_epoch so readers rebuild
+# their visible series when existing points have been changed or removed.
+_POINT_COLUMNS = """s.event_id AS _rowid,
                s.step, s.wall_time, s.scalar_value, s.artifact_hash,
                s.object_type, s.metadata,
                a.mime_type AS artifact_mime,
@@ -69,8 +63,8 @@ def get_updates(
                {_POINT_COLUMNS}
         FROM sequences s
         LEFT JOIN artifacts a ON a.hash = s.artifact_hash
-        WHERE s.run_id = ? AND s.rowid > ?
-        ORDER BY s.rowid
+        WHERE s.run_id = ? AND s.event_id > ?
+        ORDER BY s.event_id
         LIMIT ?
         """,
         [run_id, since, UPDATES_LIMIT],
@@ -174,19 +168,18 @@ def custom_kinds(db: Any, run_ids: list[str]) -> dict[str, dict[str, str]]:
         return {}
     holes = ",".join("?" * len(run_ids))
     out: dict[str, dict[str, str]] = {}
-    # SQLite: the bare column next to MAX(step) comes from the max-step row.
-    for run_id, name, _step, kind in db.read(
-        f"""
-        SELECT s.run_id, s.name, MAX(s.step), json_extract(a.metadata, '$.kind')
-        FROM sequences s
-        JOIN artifacts a ON a.hash = s.artifact_hash
-        WHERE s.run_id IN ({holes}) AND s.object_type = 'custom'
-        GROUP BY s.run_id, s.name
-        """,
-        run_ids,
+    # Rank explicitly: aggregate bare-column selection is SQLite-specific.
+    for run_id, name, metadata in db.read(
+        f"""SELECT run_id, name, metadata FROM (
+            SELECT s.run_id, s.name, a.metadata,
+                   ROW_NUMBER() OVER (PARTITION BY s.run_id,s.name ORDER BY s.step DESC) AS position
+            FROM sequences s JOIN artifacts a ON a.hash=s.artifact_hash
+            WHERE s.run_id IN ({holes}) AND s.object_type='custom'
+        ) ranked WHERE position=1""", run_ids,
     ):
-        if isinstance(kind, str):
-            out.setdefault(run_id, {})[name] = kind
+        import json
+        kind = json.loads(metadata or '{}').get('kind')
+        if isinstance(kind, str): out.setdefault(run_id, {})[name] = kind
     return out
 
 
@@ -248,7 +241,7 @@ def _series(db: Any, run_id: str, data_epoch: int, names: list[str]) -> dict[str
         holes = ",".join("?" * len(names))
         rows = db.read(
             f"""
-            SELECT s.rowid, s.name, s.step, s.wall_time, s.scalar_value,
+            SELECT s.event_id, s.name, s.step, s.wall_time, s.scalar_value,
                    s.artifact_hash, s.object_type, s.metadata,
                    a.mime_type, a.size_bytes, a.metadata
             FROM sequences s
@@ -302,11 +295,6 @@ def get_series_many(body: SeriesManyBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail=f"at most {SERIES_MANY_LIMIT} names per request")
     ids = list(body.runs)
     forbidden: list[str] = []
-    grant = auth.request_share(request)
-    if grant is not None:
-        scope = auth.share_scope(request, grant)
-        forbidden = [rid for rid in ids if rid not in scope.run_ids]
-        ids = [rid for rid in ids if rid in scope.run_ids]
     db = get_db(request)
     epochs: dict[str, int] = {}
     for i in range(0, len(ids), 500):

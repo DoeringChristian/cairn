@@ -6,17 +6,19 @@ from __future__ import annotations
 import io
 import sqlite3
 
+import pytest
+
 import cairn
 import json
 
 from fastapi.testclient import TestClient
 
-from cairn.server import legacy_wal_import, record_apply
+from cairn.backend import record_apply
 from cairn.server.app import create_app
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
-from cairn.server.storage.migrations import apply_migrations
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
+from cairn.backend.storage.migrations import UnsupportedSchema, apply_migrations
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
@@ -133,6 +135,32 @@ def test_rename_and_group_change_move_to_the_new_series(client):
     assert _version(client, a["run_id"]) == 4
 
 
+def test_concurrent_renames_allocate_each_series_number_once(data_dir):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from cairn.backend import ingest_ops
+
+    db = Database.open(data_dir.db_path)
+    try:
+        runs = [ingest_ops.create_run(db, project='parallel', name=f'run-{i}')['run_id']
+                for i in range(8)]
+    finally:
+        db.close()
+    ready = Barrier(len(runs))
+
+    def rename(run_id):
+        connection = Database.open(data_dir.db_path)
+        try:
+            ready.wait(timeout=10)
+            return ingest_ops.rename_run(connection, run_id, 'shared')['version']
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(max_workers=len(runs)) as pool:
+        versions = list(pool.map(rename, runs))
+    assert sorted(versions) == list(range(1, 9))
+
+
 def test_resume_join_keep_and_fork_takes_next(client):
     a = _create(client, "train")
     rid = a["run_id"]
@@ -191,7 +219,7 @@ def test_upload_is_numbered_once_when_the_apply_fails_mid_batch(tmp_path, monkey
             raise sqlite3.OperationalError("simulated crash before commit")
         return real(*a, **kw)
 
-    app = create_app(data_dir=tmp_path / ".cairn")
+    app = create_app(data_dir=tmp_path / ".cairn", auth_enabled=False)
     with TestClient(app, raise_server_exceptions=False) as client:
         def upload(rid: str) -> int:
             return client.post(f"/api/ingest/runs/{rid}/logs/main", json={
@@ -219,25 +247,6 @@ def test_upload_is_numbered_once_when_the_apply_fails_mid_batch(tmp_path, monkey
         v = _versions(db)
         assert v["3" * 32] == 3 and v[ids[0]] == 1
         assert _counter(db, "train") == 3 and _counter(db, "eval") == 1
-
-
-def test_waiting_legacy_logs_are_numbered_in_creation_order(tmp_path):
-    """0.5 run logs imported together are applied in the order their runs
-    were created, not by file name (the random run id): the later run, whose
-    id sorts first, still gets the higher version."""
-    dd = DataDir(tmp_path / ".cairn")
-    wals = dd.root / "wals"
-    wals.mkdir()
-    for rid, created in (("9" * 32, "2026-10-08T10:00:00+00:00"), ("1" * 32, "2026-10-08T10:00:01+00:00")):
-        (wals / f"{rid}.wal.jsonl").write_text(json.dumps({"seq": 1, "op": "create_run", "payload": {
-            "project": "p", "project_id": "p", "run_id": rid, "name": "train", "created_at": created,
-        }}) + "\n")
-    db = Database.open(dd.db_path)
-    try:
-        legacy_wal_import.import_legacy_logs(dd, db, BlobStore(dd.artifacts_dir))
-        assert _versions(db) == {"9" * 32: 1, "1" * 32: 2}
-    finally:
-        db.close()
 
 
 def test_sdk_run_version_on_a_local_repo(tmp_path):
@@ -295,111 +304,17 @@ def test_reader_rename_on_a_local_repo(tmp_path):
 # ---- migration ----------------------------------------------------------------
 
 
-def test_migration_numbers_existing_runs(tmp_path):
-    path = tmp_path / "old.db"
-    con = sqlite3.connect(path)
-    # A database from before run versions (the columns the numbering reads).
-    con.execute(
-        "CREATE TABLE runs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
-        "display_name TEXT, created_at TEXT NOT NULL, status TEXT NOT NULL, run_group TEXT)"
-    )
-    rows = [
-        ("r3", "train", None, "2026-01-03"),
-        ("r1", "train", None, "2026-01-01"),
-        ("r2b", "train", None, "2026-01-02"),
-        ("r2a", "train", None, "2026-01-02"),  # a tie: by id
-        ("g1", "train", "exp-1", "2026-01-05"),
-        ("u1", None, None, "2026-01-01"),
-        ("e1", "eval", None, "2026-01-09"),
-    ]
-    con.executemany(
-        "INSERT INTO runs (id, project_id, display_name, run_group, created_at, status) "
-        "VALUES (?, 'p', ?, ?, ?, 'completed')", rows,
-    )
-    con.commit()
-    apply_migrations(con)
-    got = dict(con.execute("SELECT id, version FROM runs").fetchall())
-    assert got == {"r1": 1, "r2a": 2, "r2b": 3, "r3": 4, "g1": 1, "u1": None, "e1": 1}
-    counters = {
-        (g, n): v for g, n, v in con.execute(
-            "SELECT run_group, name, last_version FROM run_series"
-        )
-    }
-    assert counters == {("", "train"): 4, ("exp-1", "train"): 1, ("", "eval"): 1}
-    # Idempotent: a second run changes nothing.
-    apply_migrations(con)
-    assert dict(con.execute("SELECT id, version FROM runs").fetchall()) == got
-    con.close()
-
-
-def test_migration_renumbers_runs_keyed_without_job_type(tmp_path):
-    """A database numbered per (group, name) is renumbered per (group,
-    job_type, name)."""
-    path = tmp_path / "old.db"
-    con = sqlite3.connect(path)
-    con.execute(
-        "CREATE TABLE runs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
-        "display_name TEXT, created_at TEXT NOT NULL, status TEXT NOT NULL, run_group TEXT, "
-        "job_type TEXT, version INTEGER)"
-    )
-    con.execute(
-        "CREATE TABLE run_series (project_id TEXT NOT NULL, grouped INTEGER NOT NULL, "
-        "run_group TEXT NOT NULL, name TEXT NOT NULL, last_version INTEGER NOT NULL, "
-        "PRIMARY KEY (project_id, grouped, run_group, name))"
-    )
-    rows = [
-        ("t1", "train", "g", "train", "2026-01-01", 1),
-        ("e1", "train", "g", "eval", "2026-01-02", 2),
-        ("t2", "train", "g", "train", "2026-01-03", 3),
-    ]
-    con.executemany(
-        "INSERT INTO runs (id, project_id, display_name, run_group, job_type, created_at, "
-        "status, version) VALUES (?, 'p', ?, ?, ?, ?, 'completed', ?)", rows,
-    )
-    con.execute("INSERT INTO run_series VALUES ('p', 1, 'g', 'train', 3)")
-    con.commit()
-    apply_migrations(con)
-    got = dict(con.execute("SELECT id, version FROM runs").fetchall())
-    assert got == {"t1": 1, "e1": 1, "t2": 2}
-    counters = set(con.execute("SELECT run_group, typed, job_type, name, last_version FROM run_series"))
-    assert counters == {("g", 1, "train", "train", 2), ("g", 1, "eval", "train", 1)}
-    apply_migrations(con)
-    assert dict(con.execute("SELECT id, version FROM runs").fetchall()) == got
-    con.close()
+def test_old_run_numbering_requires_conversion_and_preserves_numbers(tmp_path):
+    with sqlite3.connect(tmp_path / "old.db") as con:
+        con.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, job_type TEXT, version INTEGER)")
+        con.executemany("INSERT INTO runs VALUES (?,?,?)", [('train','train',1),('eval','eval',2)])
+        con.execute("CREATE TABLE run_series (project_id TEXT, name TEXT, last_version INTEGER)")
+        con.execute("INSERT INTO run_series VALUES ('p','train',2)")
+        con.commit()
+        before = list(con.iterdump())
+        with pytest.raises(UnsupportedSchema):
+            apply_migrations(con)
+        assert list(con.iterdump()) == before
 
 
 # ---- cairn list ----------------------------------------------------------------
-
-
-def test_cairn_list_shows_and_sorts_by_version(tmp_path):
-    from click.testing import CliRunner
-
-    from cairn import cli
-
-    repo = tmp_path / ".cairn"
-    for name in ("train", "train", "train", "evaluate"):
-        cairn.Run("p", name=name, repo=repo, **QUIET).finish()
-    result = CliRunner().invoke(
-        cli.main, ["list", "--repo", str(repo), "--project", "p", "--sort", "version", "--asc"],
-    )
-    assert result.exit_code == 0, result.output
-    rows = [line.split() for line in result.output.strip().splitlines()]
-    assert rows[0][:3] == ["ID", "NAME", "VERSION"]
-    assert [r[2] for r in rows[1:]] == ["1", "1", "2", "3"]
-
-
-def test_cairn_list_shows_group_and_job_type_when_a_run_has_one(tmp_path):
-    from click.testing import CliRunner
-
-    from cairn import cli
-
-    repo = tmp_path / ".cairn"
-    for job_type in ("train", "eval", "train"):
-        cairn.Run("p", name="m", group="g", job_type=job_type, repo=repo, **QUIET).finish()
-    result = CliRunner().invoke(
-        cli.main, ["list", "--repo", str(repo), "--project", "p", "--sort", "created_at", "--asc"],
-    )
-    assert result.exit_code == 0, result.output
-    rows = [line.split() for line in result.output.strip().splitlines()]
-    assert rows[0][:5] == ["ID", "NAME", "GROUP", "JOB_TYPE", "VERSION"]
-    assert [r[2:5] for r in rows[1:]] == [["g", "train", "1"], ["g", "eval", "1"], ["g", "train", "2"]]

@@ -56,13 +56,13 @@ def series(tmp_path, name, project="scope"):
 
 
 # --------------------------------------------------------------------------
-# step is required outside a scope
+# step is optional; observation order supplies the default index
 # --------------------------------------------------------------------------
 
-def test_track_requires_step(run):
-    with pytest.raises(TypeError) as excinfo:
-        run.track(1.0, "loss")  # type: ignore[call-arg]
-    assert "step" in str(excinfo.value)
+def test_track_optional_step(run, tmp_path):
+    run.track(1.0, "loss")
+    run.finish()
+    assert series(tmp_path, "loss") == ([0], [1.0])
 
 
 def test_track_accepts_step_positionally(run, tmp_path):

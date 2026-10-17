@@ -66,7 +66,7 @@ def test_version_routes(client):
     assert client.delete(f"/api/artifact-versions/{vid}/aliases/prod").json()["aliases"] == ["latest", "best"]
     assert client.post(f"/api/artifact-versions/{vid}/tags", json={"tag": "x"}).json()["tags"] == ["t", "x"]
     assert client.delete(f"/api/artifact-versions/{vid}/tags/t").json()["tags"] == ["x"]
-    patched = client.patch(f"/api/artifact-versions/{vid}", json={"metadata": {"m": 2}}).json()
+    patched = client.patch(f"/api/artifact-versions/{vid}", json={"metadata": {"m": 2}, "expected_revision": client.get(f"/api/artifact-versions/{vid}").json()["revision"]}).json()
     assert (patched["metadata"], patched["description"]) == ({"n": 1, "m": 2}, "d")
 
     for path in (f"/api/artifact-versions/{vid}/lineage", f"/api/runs/{rid}/lineage",

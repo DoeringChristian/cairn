@@ -148,7 +148,7 @@ def gated(tmp_path, monkeypatch):
     monkeypatch.setenv("CAIRN_UI_DIST", str(dist))
     app = create_app(data_dir=tmp_path / "cairn", mount_ui=True, auth_enabled=True)
     with TestClient(app) as c:
-        _id, token = auth_core.create_token(app.state.db, name="reader", role="read")
+        token = app.state.token
         yield c, token
 
 

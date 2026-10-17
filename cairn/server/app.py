@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,10 +27,9 @@ from starlette.middleware.gzip import GZipResponder
 from fastapi.responses import JSONResponse
 
 from .. import __version__
-from . import alerts as alerts_core
+from cairn.backend import alerts as alerts_core
 from . import auth as auth_core
-from .embed_specs import EmbedSpecStore
-from .report_scope import ScopeCache
+from cairn.backend.embed_specs import EmbedSpecStore
 from .routes import (
     admin,
     alerts,
@@ -47,24 +47,26 @@ from .routes import (
     projects,
     query,
     records,
-    report_assets,
     report_comments,
-    report_templates,
     reports,
+    report_publications,
+    report_workspaces,
+    report_notebook,
+    run_records,
+    report_inline,
     runs,
     sequences,
     series_buckets,
-    shares,
     source,
     sweeps,
     viewers,
 )
 from .ui_mount import mount_viewer
-from .storage.blobs import BlobStore
-from .storage.datadir import DataDir, default_data_dir
-from .storage.db import Database
-from .record_apply import mark_crashed
-from .startup import open_repo_database
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir, default_data_dir
+from cairn.backend.storage.db import Database
+from cairn.backend.record_apply import mark_crashed
+from cairn.backend.startup import open_repo_database
 
 _log = logging.getLogger(__name__)
 
@@ -154,9 +156,13 @@ def create_app(
     blobs: BlobStore | None = None,
     data_dir_obj: DataDir | None = None,
     mount_ui: bool = False,
-    auth_enabled: bool = False,
+    auth_enabled: bool = True,
+    token: str | None = None,
+    token_file: Path | None = None,
     background_tasks: bool = True,
     alert_webhook: str | None = None,
+    database_url: str | None = None,
+    blob_root: str | None = None,
 ) -> FastAPI:
     """Build a FastAPI app.
 
@@ -175,12 +181,11 @@ def create_app(
             unless a caller asks for it. ``cairn ui`` and ``cairn server --ui``
             opt in. When True but no viewer is installed, ``/`` serves the
             ``no_ui`` placeholder rather than failing.
-        auth_enabled: When True, every ``/api/*`` route except
-            ``/api/health`` and ``/api/auth/*`` requires a Bearer token or
-            session cookie (see ``cairn/server/auth.py``). Defaults to
-            False so existing test fixtures (``tests/conftest.py``) and
-            library callers of ``create_app()`` are unaffected; the CLI
-            (``cairn server`` / ``cairn ui``) opts in unless ``--no-auth``.
+        auth_enabled: Require the single server token (default True). False is
+            an explicit opt-out for local UI and trusted deployments.
+        token: Explicit credential, taking precedence over CAIRN_TOKEN.
+        token_file: Credential file, then CAIRN_TOKEN_FILE, then <repo>/token.
+            Missing files are created atomically with private permissions.
         background_tasks: Run the lifespan's background loops (crashed and
             stale-run reaping, alert delivery, a daemon's idle exit).
             Exactly one app per repo may run them: ``cairn server --ui``
@@ -201,16 +206,31 @@ def create_app(
         dd = DataDir(resolved_dir) if owns_db else data_dir_obj
         assert dd is not None
         if owns_db:
-            _blobs = BlobStore(dd.artifacts_dir)
-            _db = open_repo_database(dd, _blobs)
+            from cairn.backend.storage.blobs import open_blob_store
+            _blobs = open_blob_store(blob_root or dd.artifacts_dir, cache_dir=dd.root/'blob-cache')
+            _db = open_repo_database(dd, _blobs, database_url=database_url)
         else:
             _db = db  # type: ignore[assignment]
             _blobs = blobs  # type: ignore[assignment]
+        # A local repository can be served directly after a process crash or a
+        # move. Apply its durable journals before readers or workers see it.
+        # Recovery is adapter orchestration; the backend stays SDK-independent.
+        from cairn.uploader.local import recover_journals
+        try:
+            await asyncio.to_thread(recover_journals, dd, _db, _blobs)
+        except BaseException:
+            if owns_db:
+                _db.close()
+            raise
         app.state.data_dir = dd
+        from cairn.backend.storage.context import StorageConfig
+        app.state.storage = StorageConfig(dd.root, database_url, blob_root)
         # Names this server's browser cookies (see auth.server_id).
         app.state.server_id = auth_core.server_id(dd.root)
         app.state.db = _db
         app.state.blobs = _blobs
+        from cairn.reports.notebook import NotebookManager
+        app.state.notebooks = NotebookManager(app.state.storage)
         _stop = asyncio.Event()
 
         def _maintenance() -> None:
@@ -248,7 +268,11 @@ def create_app(
                     return
 
         tasks: list[asyncio.Task] = []
+        report_worker = None
         if background_tasks:
+            from cairn.reports.worker import Worker
+            report_worker = Worker(dd.root, database_url=database_url, blob_root=blob_root)
+            report_worker.start()
             tasks.append(asyncio.create_task(_maintenance_loop()))
             idle_timeout = getattr(app.state, "idle_timeout", None)
             if idle_timeout:
@@ -260,6 +284,9 @@ def create_app(
             _stop.set()
             for task in tasks:
                 task.cancel()
+            if report_worker is not None:
+                await asyncio.to_thread(report_worker.close)
+            await asyncio.to_thread(app.state.notebooks.close)
             if owns_db:
                 _db.close()
 
@@ -269,18 +296,17 @@ def create_app(
         version=__version__,
         lifespan=lifespan,
     )
-    # Read by the auth dependency family (auth_core.require_role) and the
-    # before any router registration so it's never accessed unset.
+    credential_root = resolved_dir if owns_db else data_dir_obj.root
+    app.state.token, app.state.token_file = (
+        auth_core.resolve_server_token(credential_root, token, token_file)
+        if auth_enabled else (None, None)
+    )
     app.state.auth_enabled = auth_enabled
     app.state.alert_webhook = alert_webhook
     # Short-lived, in-memory store for /embed/card specs. Created
     # per-app so it shares the app's lifetime; specs are throwaway render
     # inputs, not persisted domain data. See cairn/server/embed_specs.py.
     app.state.embed_specs = EmbedSpecStore()
-    # Share links: each share's live report scope (cached 30 s) and the
-    # per-client limit on redeem attempts. See routes/shares.py.
-    app.state.share_scopes = ScopeCache()
-    app.state.share_redeem_limiter = shares.RateLimiter()
     # See _Activity; ``idle_timeout`` (seconds) and ``request_shutdown`` (a
     # callable stopping the HTTP server) are set by ``cairn server --daemon``.
     app.state.activity = {"last": time.monotonic(), "in_flight": 0}
@@ -309,23 +335,13 @@ def create_app(
         expose_headers=["Content-Range", "Content-Length", "Accept-Ranges"],
     )
 
-    require = auth_core.require_role
+    require = auth_core.require_auth
 
     # Exempt: no dependency attached. /api/health is a liveness probe;
     # /api/auth/* is how you obtain credentials in the first place.
     app.include_router(health.public_router)
     app.include_router(auth_routes.router)
-    # Redeeming a share link is how a share principal comes to exist.
-    app.include_router(shares.public_router)
-
-    # Read-role routers. A handful of these also carry individual
-    # write-role overrides on their mutating routes (POST/PUT/PATCH/DELETE)
-    # declared directly on the route decorator in the route module itself
-    # (projects, project_docs, reports,
-    # report_assets, report_comments, report_templates, artifact_registry) —
-    # role hierarchy (admin > write > read) means a write/admin token still
-    # satisfies the router-level read dependency, so stacking both
-    # dependencies on the same route correctly requires write-or-above.
+    # All data and mutations use the same credential.
     for router in (
         health.router,
         projects.router,
@@ -339,10 +355,7 @@ def create_app(
         source.router,
         compare.router,
         reports.router,
-        report_assets.router,
         report_comments.router,
-        report_templates.router,
-        shares.router,
         artifact_registry.router,
         embed.router,
         alerts.router,
@@ -350,11 +363,11 @@ def create_app(
         viewers.router,
         metric_rules_routes.router,
     ):
-        app.include_router(router, dependencies=[Depends(require("read"))])
+        app.include_router(router, dependencies=[Depends(require)])
 
-    # Write-role routers (uniformly mutating — no read-only routes inside).
-    for router in (ingest.router, records.router, import_export.router, admin.router):
-        app.include_router(router, dependencies=[Depends(require("write"))])
+    # Ingestion and administrative operations use the same dependency.
+    for router in (ingest.router, records.router, import_export.router, admin.router, report_publications.router, report_workspaces.router, report_inline.router, report_notebook.router, run_records.router):
+        app.include_router(router, dependencies=[Depends(require)])
 
     if mount_ui:
         mount_viewer(app)

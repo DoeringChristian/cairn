@@ -9,11 +9,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
-from .. import auth, sweep_ops
-from ._common import get_db, slugify
+from cairn.server import auth
+from cairn.backend import sweep_ops
+from cairn.server.routes._common import get_db
+from cairn.backend.common import slugify
 
 router = APIRouter(prefix="/api", tags=["sweeps"])
-_write = Depends(auth.require_role("write"))
+_write = Depends(auth.require_auth)
 
 
 class SweepCreate(BaseModel):

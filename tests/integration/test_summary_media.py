@@ -19,11 +19,11 @@ import cairn
 from tests.conftest import ingest_repo
 from cairn.sdk.gallery import GALLERY_MIME
 from cairn.sdk.reader import MediaRef
-from cairn.server import gc, ingest_ops
+from cairn.backend import gc, ingest_ops
 from cairn.server.app import create_app
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
          "capture_system_metrics": False}
@@ -232,7 +232,7 @@ def test_non_json_non_media_names_the_summary(tmp_path):
 def test_catalogue_series_and_overview_shape(tmp_path):
     repo = tmp_path / ".cairn"
     rid = _train(repo)
-    with TestClient(create_app(data_dir=repo, mount_ui=False)) as client:
+    with TestClient(create_app(data_dir=repo, mount_ui=False, auth_enabled=False)) as client:
         cat = {s["name"]: s for s in client.get(f"/api/runs/{rid}/sequences").json()["sequences"]}
         assert cat["showcase.loss_landscape"] == {
             "name": "showcase.loss_landscape", "object_type": "image", "min_step": 0,
@@ -341,7 +341,7 @@ def test_duplicate_step_warns_once_per_series(fresh_db, caplog):
     ingest_ops.insert_batch(fresh_db, rid, batch)  # a re-sent batch: not a duplicate
     assert fresh_db.read("SELECT * FROM alerts WHERE run_id = ?", [rid]) == []
 
-    with caplog.at_level("WARNING", logger="cairn.server.ingest_ops"):
+    with caplog.at_level("WARNING", logger="cairn.backend.ingest_ops"):
         ingest_ops.insert_batch(fresh_db, rid, [point(1, 5.0, 5)])
         ingest_ops.insert_batch(fresh_db, rid, [point(0, 6.0, 6)])
     alerts = fresh_db.read("SELECT level, title, text FROM alerts WHERE run_id = ?", [rid])

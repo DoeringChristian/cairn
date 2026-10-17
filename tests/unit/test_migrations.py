@@ -1,338 +1,233 @@
-"""Unit tests for schema migrations."""
-
+"""Non-destructive opening and atomic upgrades of the supported storage baseline."""
 from __future__ import annotations
 
 import sqlite3
 
 import pytest
 
-from cairn.server.storage.migrations import (
+from cairn.backend.storage.db import Database
+from cairn.backend.storage.migrations import (
+    MIN_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    SchemaTooNew,
+    UnsupportedSchema,
     apply_migrations,
+    needs_migration,
 )
 
 
 @pytest.fixture
 def conn(tmp_path):
-    c = sqlite3.connect(str(tmp_path / "test.db"))
-    c.execute("PRAGMA foreign_keys=ON")
-    yield c
-    c.close()
+    con = sqlite3.connect(tmp_path / "test.db")
+    con.execute("PRAGMA foreign_keys=ON")
+    yield con
+    con.close()
 
 
-def _tables(con) -> set[str]:
-    rows = con.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()
-    return {r[0] for r in rows}
+def _tables(con):
+    return {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def test_fresh_schema_creates_all_tables(conn):
+def _snapshot(con):
+    return list(con.iterdump())
+
+
+def _supported_old(con, version):
+    """Remove precisely the additions after the supported version under test."""
+    apply_migrations(con)
+    con.execute("INSERT INTO projects VALUES ('p','Project','2026-01-01',NULL,NULL)")
+    con.execute("INSERT INTO runs(id,project_id,created_at,status) VALUES ('r','p','2026-01-01','completed')")
+    con.execute("INSERT INTO sequences(run_id,name,step,wall_time,object_type,scalar_value) "
+                "VALUES ('r','loss',2147483648,'2026-01-01','scalar',0.5)")
+    if version <= 9:
+        con.execute("DROP TABLE run_records")
+    if version in (7, 8):
+        for column in ('owner', 'lease_until'):
+            con.execute(f'ALTER TABLE report_builds DROP COLUMN {column}')
+        for column in ('revision_id', 'selection', 'revision'):
+            con.execute(f'ALTER TABLE comments DROP COLUMN {column}')
+    con.execute("UPDATE schema_version SET version=?", [version])
+    con.commit()
+
+
+def test_fresh_schema_creates_current_domain_tables(conn):
     apply_migrations(conn)
-    expected = {
-        "schema_version",
-        "projects",
-        "runs",
-        "params",
-        "sequences",
-        "artifacts",
-        "artifact_versions",
-        "artifact_entries",
-        "log_lines",
-    }
-    assert expected.issubset(_tables(conn))
-    assert "run_artifacts" not in _tables(conn)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-    assert {"config", "summary", "archived_at"} <= cols
+    assert {'projects', 'runs', 'sequences', 'run_records', 'artifacts',
+            'artifact_versions', 'artifact_entries', 'log_lines', 'resource_heads',
+            'resource_revisions', 'report_workspaces', 'report_builds',
+            'report_publications', 'ingest_progress', 'ingest_receipts'} <= _tables(conn)
+    assert not {'run_artifacts', 'comparisons', 'sessions', 'tokens'} & _tables(conn)
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(SCHEMA_VERSION,)]
 
 
-def test_old_registry_and_run_attachments_are_dropped(conn):
-    """No data migration (a user ruling): an old-shape registry and the run
-    attachments table are dropped and recreated empty."""
-    conn.execute("CREATE TABLE run_artifacts (run_id TEXT, name TEXT)")
-    conn.execute(
-        "CREATE TABLE artifact_versions (id TEXT PRIMARY KEY, family_id TEXT, version INT, "
-        "hash TEXT, size_bytes INT, metadata TEXT, created_at TEXT, created_by_run TEXT)"
-    )
-    conn.execute("INSERT INTO artifact_versions (id) VALUES ('old')")
+@pytest.mark.parametrize('version', [7, 8, 9, 10])
+def test_supported_upgrade_preserves_rows_and_adds_only_supported_features(conn, version):
+    _supported_old(conn, version)
+    runs = conn.execute('SELECT * FROM runs').fetchall()
+    points = conn.execute('SELECT * FROM sequences').fetchall()
+    assert needs_migration(conn)
     apply_migrations(conn)
-    assert "run_artifacts" not in _tables(conn)
-    assert conn.execute("SELECT COUNT(*) FROM artifact_versions").fetchone() == (0,)
-    assert "file_count" in {r[1] for r in conn.execute("PRAGMA table_info(artifact_versions)")}
-
-
-def _old_project_docs(conn, kinds="'workspace','view'"):
-    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, description TEXT, tags TEXT)")
-    conn.execute(
-        f"""CREATE TABLE project_docs (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-            kind TEXT NOT NULL CHECK(kind IN ({kinds})),
-            name TEXT NOT NULL DEFAULT '', rev INTEGER NOT NULL,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)"""
-    )
-    conn.execute(
-        "CREATE UNIQUE INDEX idx_project_docs_workspace ON project_docs(project_id) WHERE kind = 'workspace'"
-    )
-
-
-def test_old_comparison_tables_dropped_and_project_docs_rebuilt(conn):
-    """Saved comparisons are gone: old tables and comparison rows go, views stay."""
-    conn.execute("CREATE TABLE comparisons (id TEXT PRIMARY KEY, payload TEXT)")
-    conn.execute("CREATE TABLE comparison_templates (id TEXT PRIMARY KEY, payload TEXT)")
-    _old_project_docs(conn, "'comparison','view'")
-    conn.execute("INSERT INTO projects VALUES ('p', 'p', 't', NULL, NULL)")
-    conn.execute("INSERT INTO project_docs VALUES ('c1', 'p', 'comparison', 'c', 4, 't', 't', '{\"runs\": {}}')")
-    conn.execute("INSERT INTO project_docs VALUES ('v1', 'p', 'view', 'Default', 3, 't', 't', '{\"a\": 1}')")
+    assert conn.execute('SELECT * FROM runs').fetchall() == runs
+    assert conn.execute('SELECT * FROM sequences').fetchall() == points
+    assert 'run_records' in _tables(conn)
+    assert {'owner', 'lease_until'} <= {r[1] for r in conn.execute('PRAGMA table_info(report_builds)')}
+    assert {'revision_id', 'selection', 'revision'} <= {r[1] for r in conn.execute('PRAGMA table_info(comments)')}
+    assert conn.execute('SELECT version FROM schema_version').fetchone() == (SCHEMA_VERSION,)
+    before = _snapshot(conn)
     apply_migrations(conn)
-    tables = _tables(conn)
-    assert "comparisons" not in tables
-    assert "comparison_templates" not in tables
-    assert conn.execute("SELECT id, kind, name, rev, payload FROM project_docs").fetchall() == [
-        ("v1", "view", "Default", 3, '{"a": 1}'),
-    ]
-    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'project_docs'").fetchone()[0]
-    assert "'comparison'" not in sql
-    apply_migrations(conn)  # idempotent
-    assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 1
+    assert _snapshot(conn) == before
 
 
-def test_project_workspace_becomes_the_default_view(conn):
-    """The run page's workspace is the first view, "Default", and current;
-    saved views ({layout}) become views holding their layout."""
-    _old_project_docs(conn)
-    conn.execute("INSERT INTO projects VALUES ('p', 'p', 't', NULL, NULL)")
-    conn.execute("INSERT INTO projects VALUES ('q', 'q', 't', NULL, NULL)")
-    conn.execute(
-        "INSERT INTO project_docs VALUES ('w1', 'p', 'workspace', '', 7, '2025-02', '2025-03', '{\"sections\": [1]}')"
-    )
-    conn.execute(
-        "INSERT INTO project_docs VALUES ('v1', 'p', 'view', 'Media', 2, '2025-01', '2025-01', '{\"layout\": {\"autoPanels\": false}}')"
-    )
-    conn.execute(
-        "INSERT INTO project_docs VALUES ('v2', 'q', 'view', 'Only', 1, '2025-05', '2025-05', '{\"layout\": {\"a\": 1}}')"
-    )
+def test_sqlite_v10_widening_is_marker_only(conn):
+    _supported_old(conn, 10)
+    before = conn.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
+    statements = []
+    conn.set_trace_callback(statements.append)
     apply_migrations(conn)
-    rows = conn.execute(
-        "SELECT project_id, id, kind, name, rev, payload FROM project_docs ORDER BY project_id, created_at, rowid"
-    ).fetchall()
-    assert rows[:2] == [
-        ("p", "w1", "view", "Default", 7, '{"sections": [1]}'),
-        ("p", "v1", "view", "Media", 2, '{"autoPanels": false}'),
-    ]
-    # A project with saved views but no workspace gets an empty Default first.
-    (_, q_default, _, q_name, _, q_payload), q_saved = rows[2], rows[3]
-    assert (q_name, q_payload) == ("Default", "{}")
-    assert q_saved[1:] == ("v2", "view", "Only", 1, '{"a": 1}')
-    assert dict(conn.execute("SELECT project_id, view_id FROM project_view_state").fetchall()) == {
-        "p": "w1", "q": q_default,
-    }
-    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'project_docs'").fetchone()[0]
-    assert "'workspace'" not in sql
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("INSERT INTO project_docs VALUES ('x', 'p', 'workspace', '', 1, 't', 't', '{}')")
-    apply_migrations(conn)  # idempotent
-    assert len(conn.execute("SELECT * FROM project_docs").fetchall()) == 4
-def test_report_templates_table_created(conn):
+    assert conn.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall() == before
+    assert not any(sql.lstrip().upper().startswith(('CREATE ', 'ALTER ', 'DROP ', 'INSERT ', 'DELETE ')) for sql in statements)
+    assert sum(sql.lstrip().upper().startswith('UPDATE ') for sql in statements) == 1
+
+
+def test_current_schema_does_no_ddl_or_data_rewrite(conn):
     apply_migrations(conn)
-    assert "report_templates" in _tables(conn)
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
-    ).fetchall()
-    assert "idx_report_templates_project" in {r[0] for r in rows}
-
-
-def test_version_row_written(conn):
+    statements = []
+    conn.set_trace_callback(statements.append)
     apply_migrations(conn)
-    (version,) = conn.execute("SELECT version FROM schema_version").fetchone()
-    assert version == SCHEMA_VERSION
+    assert not any(sql.lstrip().upper().startswith(('CREATE ', 'ALTER ', 'DROP ', 'INSERT ', 'UPDATE ', 'DELETE ', 'BEGIN', 'COMMIT')) for sql in statements)
 
 
-def test_second_call_is_idempotent(conn):
+def test_current_schema_does_not_commit_callers_transaction(conn):
     apply_migrations(conn)
-    conn.execute(
-        "INSERT INTO projects VALUES ('p', 'Proj', '2025-01-01T00:00:00', NULL, NULL)"
-    )
+    conn.execute("INSERT INTO projects VALUES ('uncommitted','p','t',NULL,NULL)")
+    apply_migrations(conn)
+    assert conn.in_transaction
+    conn.rollback()
+    assert conn.execute('SELECT id FROM projects').fetchall() == []
+
+
+@pytest.mark.parametrize('version', [0, 2, 3, 6])
+def test_unsupported_version_is_refused_without_touching_data(conn, version):
+    conn.execute('CREATE TABLE schema_version(version INTEGER NOT NULL)')
+    conn.execute('INSERT INTO schema_version VALUES (?)', [version])
+    conn.execute('CREATE TABLE saved_data(payload TEXT)')
+    conn.execute("INSERT INTO saved_data VALUES ('keep this')")
     conn.commit()
-    apply_migrations(conn)
-    rows = conn.execute("SELECT id FROM projects").fetchall()
-    assert rows == [("p",)]
-    (count,) = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()
-    assert count == 1
+    before = _snapshot(conn)
+    with pytest.raises(UnsupportedSchema, match='supported range'):
+        apply_migrations(conn)
+    assert _snapshot(conn) == before
 
 
-def test_indexes_created(conn):
-    apply_migrations(conn)
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
-    ).fetchall()
-    names = {r[0] for r in rows}
-    assert "idx_sequences_run_name" in names
-    assert "idx_sequences_step" in names
-    assert "idx_log_lines_run" in names
-
-
-def test_sequences_keyed_by_run_name_step(conn):
-    apply_migrations(conn)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(sequences)")}
-    assert not {"context", "context_hash"} & cols
-    conn.execute("INSERT INTO projects VALUES ('p', 'p', '2025-01-01', NULL, NULL)")
-    conn.execute("INSERT INTO runs (id, project_id, created_at, status) VALUES ('r', 'p', '2025-01-01', 'running')")
-    row = "INSERT INTO sequences (run_id, name, step, wall_time, object_type) VALUES ('r', 'loss', 0, 't', 'scalar')"
-    conn.execute(row)
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(row)
-
-
-def test_tokens_gain_parent_id_column(conn):
-    conn.execute(
-        "CREATE TABLE tokens (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, "
-        "token_hash TEXT NOT NULL UNIQUE, role TEXT NOT NULL, created_at TEXT NOT NULL, "
-        "last_used_at TEXT, expires_at TEXT, disabled INTEGER NOT NULL DEFAULT 0)"
-    )
-    conn.execute(
-        "INSERT INTO tokens VALUES ('t1', 'admin', 'hash', 'admin', '2025-01-01', NULL, NULL, 0)"
-    )
+@pytest.mark.parametrize('table', ['run_artifacts', 'comparisons', 'comparison_templates', 'tokens'])
+def test_populated_unversioned_database_is_refused_without_conversion(conn, table):
+    conn.execute(f'CREATE TABLE {table}(payload TEXT)')
+    conn.execute(f"INSERT INTO {table} VALUES ('keep this')")
     conn.commit()
-    apply_migrations(conn)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(tokens)")}
-    assert "parent_id" in cols
-    assert conn.execute("SELECT parent_id FROM tokens WHERE id = 't1'").fetchone() == (None,)
+    before = _snapshot(conn)
+    with pytest.raises(UnsupportedSchema, match='no Cairn schema version'):
+        apply_migrations(conn)
+    assert _snapshot(conn) == before
 
 
-def test_sessions_table_is_dropped(conn):
-    conn.execute(
-        "CREATE TABLE sessions (id TEXT PRIMARY KEY, token_id TEXT NOT NULL, "
-        "created_at TEXT NOT NULL, expires_at TEXT NOT NULL)"
-    )
-    conn.execute("CREATE INDEX idx_sessions_token ON sessions(token_id)")
+@pytest.mark.parametrize('legacy_sql', [
+    'CREATE TABLE run_artifacts(run_id TEXT,name TEXT)',
+    'CREATE TABLE comparisons(id TEXT,payload TEXT)',
+    'CREATE TABLE comparison_templates(id TEXT,payload TEXT)',
+])
+def test_supported_marker_does_not_authorize_destructive_legacy_conversion(conn, legacy_sql):
+    _supported_old(conn, MIN_SCHEMA_VERSION)
+    conn.execute(legacy_sql)
     conn.commit()
-    apply_migrations(conn)
-    assert "sessions" not in _tables(conn)
-    assert "idx_sessions_token" not in {
-        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
-    }
-    assert "tokens" in _tables(conn)
+    before = _snapshot(conn)
+    with pytest.raises(UnsupportedSchema, match='unsupported legacy table shape'):
+        apply_migrations(conn)
+    assert _snapshot(conn) == before
 
 
-# The runs/sequences DDL as it stood before parent/fork/epoch/group/... and
-# per-point metadata were added.
-_OLD_SCHEMA = [
-    "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
-    "created_at TEXT NOT NULL, description TEXT, tags TEXT)",
-    """CREATE TABLE runs (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-        display_name TEXT, created_at TEXT NOT NULL, ended_at TEXT,
-        status TEXT NOT NULL, exit_code INTEGER, git_sha TEXT, git_dirty INTEGER,
-        git_branch TEXT, cli_args TEXT, env_snapshot TEXT, hostname TEXT,
-        "user" TEXT, tags TEXT, notes TEXT, last_heartbeat TEXT)""",
-    """CREATE TABLE sequences (
-        run_id TEXT NOT NULL REFERENCES runs(id), name TEXT NOT NULL,
-        step INTEGER NOT NULL, wall_time TEXT NOT NULL, object_type TEXT NOT NULL,
-        scalar_value REAL, artifact_hash TEXT,
-        PRIMARY KEY (run_id, name, step))""",
-    "CREATE TABLE schema_version (version INTEGER NOT NULL)",
-    "INSERT INTO schema_version VALUES (2)",
-    "INSERT INTO projects VALUES ('p', 'p', '2025-01-01', NULL, NULL)",
-    "INSERT INTO runs (id, project_id, created_at, status) "
-    "VALUES ('r', 'p', '2025-01-01', 'completed')",
-    "INSERT INTO sequences (run_id, name, step, wall_time, object_type, scalar_value) "
-    "VALUES ('r', 'loss', 0, '2025-01-01', 'scalar', 1.0)",
-]
-
-
-def _columns(con, table: str) -> set[str]:
-    return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def test_old_database_gains_new_columns_and_tables(conn):
-    for stmt in _OLD_SCHEMA:
-        conn.execute(stmt)
+def test_old_registry_shape_is_refused_instead_of_dropped(conn):
+    _supported_old(conn, 7)
+    conn.execute('DROP TABLE artifact_versions')
+    conn.execute('CREATE TABLE artifact_versions(id TEXT PRIMARY KEY,hash TEXT)')
+    conn.execute("INSERT INTO artifact_versions VALUES ('old','still-important')")
     conn.commit()
-
-    apply_migrations(conn)
-
-    assert {
-        "parent_run_id", "fork_step", "data_epoch", "git_remote", "run_group",
-        "job_type", "sweep_id", "stop_requested",
-    } <= _columns(conn, "runs")
-    assert "metadata" in _columns(conn, "sequences")
-    assert {"alerts", "metric_defs", "sweeps", "sweep_trials"} <= _tables(conn)
-    indexes = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index'"
-    ).fetchall()}
-    assert {"idx_runs_parent", "idx_runs_sweep", "idx_alerts_project"} <= indexes
-    # Existing rows survive; the added columns read as their defaults.
-    row = conn.execute(
-        "SELECT status, data_epoch, run_group, stop_requested FROM runs WHERE id = 'r'"
-    ).fetchone()
-    assert row == ("completed", 0, None, None)
-    assert conn.execute("SELECT scalar_value, metadata FROM sequences").fetchone() == (1.0, None)
-    # A second pass is a no-op.
-    apply_migrations(conn)
+    before = _snapshot(conn)
+    with pytest.raises(UnsupportedSchema, match='artifact_versions'):
+        apply_migrations(conn)
+    assert _snapshot(conn) == before
 
 
-def test_log_lines_gain_label_and_wal_progress_worker(conn):
-    """Shared runs: a console line's process label, a worker's log."""
-    conn.execute(
-        "CREATE TABLE log_lines (run_id TEXT NOT NULL, stream TEXT NOT NULL, "
-        "wall_time TEXT NOT NULL, line_no INTEGER NOT NULL, content TEXT NOT NULL)"
-    )
-    conn.execute("INSERT INTO log_lines VALUES ('r', 'stdout', 't', 1, 'hi')")
-    conn.execute(
-        'CREATE TABLE wal_progress (path TEXT PRIMARY KEY, run_id TEXT NOT NULL, '
-        '"offset" INTEGER NOT NULL, finished INTEGER NOT NULL DEFAULT 0, '
-        "updated_at TEXT NOT NULL)"
-    )
-    conn.execute("INSERT INTO wal_progress VALUES ('r.wal.jsonl', 'r', 10, 0, 't')")
+@pytest.mark.parametrize('versions', [[], [7, 8], ['unknown']])
+def test_ambiguous_version_marker_is_refused(conn, versions):
+    conn.execute('CREATE TABLE schema_version(version)')
+    conn.executemany('INSERT INTO schema_version VALUES (?)', [(v,) for v in versions])
     conn.commit()
-    apply_migrations(conn)
-    assert conn.execute("SELECT content, label FROM log_lines").fetchone() == ("hi", None)
-    assert conn.execute("SELECT worker FROM wal_progress").fetchone() == (0,)
-    fresh = sqlite3.connect(":memory:")
+    before = _snapshot(conn)
+    with pytest.raises(UnsupportedSchema, match='version marker'):
+        apply_migrations(conn)
+    assert _snapshot(conn) == before
+
+
+def test_future_schema_is_refused_without_modification(conn):
+    _supported_old(conn, 10)
+    conn.execute('UPDATE schema_version SET version=?', [SCHEMA_VERSION + 1])
+    conn.commit()
+    before = _snapshot(conn)
+    with pytest.raises(SchemaTooNew):
+        apply_migrations(conn)
+    assert _snapshot(conn) == before
+
+
+@pytest.mark.parametrize('failure', ['create', 'commit'])
+def test_failed_upgrade_rolls_back_ddl_rows_and_version(conn, failure):
+    _supported_old(conn, 7)
+    before = _snapshot(conn)
+    def authorize(action, arg1, arg2, database, trigger):
+        fail = (failure == 'create' and action == sqlite3.SQLITE_CREATE_TABLE and arg1 == 'run_records')
+        fail |= (failure == 'commit' and action == sqlite3.SQLITE_TRANSACTION and arg1 == 'COMMIT')
+        return sqlite3.SQLITE_DENY if fail else sqlite3.SQLITE_OK
+    conn.set_authorizer(authorize)
     try:
-        apply_migrations(fresh)
-        for table in ("log_lines", "wal_progress"):
-            assert _columns(fresh, table) == _columns(conn, table)
+        with pytest.raises(sqlite3.DatabaseError, match='not authorized'):
+            apply_migrations(conn)
     finally:
-        fresh.close()
-
-
-def test_fresh_schema_matches_migrated_schema(tmp_path):
-    """SCHEMA_SQL and the column migrations describe the same runs/sequences."""
-    fresh = sqlite3.connect(str(tmp_path / "fresh.db"))
-    old = sqlite3.connect(str(tmp_path / "old.db"))
-    try:
-        apply_migrations(fresh)
-        for stmt in _OLD_SCHEMA:
-            old.execute(stmt)
-        apply_migrations(old)
-        for table in ("runs", "sequences"):
-            assert _columns(fresh, table) == _columns(old, table)
-    finally:
-        fresh.close()
-        old.close()
-
-
-def test_old_sweeps_gain_program_and_their_command_becomes_an_argv(conn):
-    """A sweep's shell-string command (params appended by the agent) becomes
-    the JSON argv ending in ``${args}``, which the agent expands the same way."""
-    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
-                 "created_at TEXT NOT NULL, description TEXT, tags TEXT)")
-    conn.execute(
-        "CREATE TABLE sweeps (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT, "
-        "method TEXT NOT NULL, space TEXT NOT NULL, metric TEXT, goal TEXT, command TEXT, "
-        "status TEXT NOT NULL, created_at TEXT NOT NULL)"
-    )
-    conn.execute("INSERT INTO sweeps VALUES ('a', 'p', NULL, 'grid', '{}', NULL, NULL, "
-                 "'python \"my train.py\"', 'running', '2025-01-01')")
-    conn.execute("INSERT INTO sweeps VALUES ('b', 'p', NULL, 'grid', '{}', NULL, NULL, "
-                 "NULL, 'cancelled', '2025-01-01')")
-    conn.commit()
+        conn.set_authorizer(None)
+    assert not conn.in_transaction
+    assert _snapshot(conn) == before
     apply_migrations(conn)
-    assert {"program", "run_cap", "description"} <= _columns(conn, "sweeps")
-    converted = '["python", "my train.py", "${args}"]'
-    assert conn.execute("SELECT id, command FROM sweeps ORDER BY id").fetchall() == [
-        ("a", converted), ("b", None),
-    ]
-    apply_migrations(conn)  # a second pass leaves the converted command alone
-    assert conn.execute("SELECT command FROM sweeps WHERE id = 'a'").fetchone() == (converted,)
+    assert conn.execute('SELECT version FROM schema_version').fetchone() == (SCHEMA_VERSION,)
+
+
+def test_database_open_backs_up_once_before_supported_upgrade(tmp_path):
+    path = tmp_path / 'cairn.db'
+    with sqlite3.connect(path) as con:
+        _supported_old(con, 10)
+        before = _snapshot(con)
+    db = Database.open(path)
+    db.close()
+    backups = list((tmp_path / 'backups').glob('*.db'))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as con:
+        assert _snapshot(con) == before
+    db = Database.open(path)
+    db.close()
+    assert list((tmp_path / 'backups').glob('*.db')) == backups
+
+
+def test_database_open_refuses_unsupported_before_changing_journal_mode(tmp_path):
+    path = tmp_path / 'old.db'
+    with sqlite3.connect(path) as con:
+        con.execute('CREATE TABLE run_artifacts(payload TEXT)')
+        con.execute("INSERT INTO run_artifacts VALUES ('retain')")
+    before = path.read_bytes()
+    with pytest.raises(UnsupportedSchema):
+        Database.open(path)
+    assert path.read_bytes() == before
+    assert not (tmp_path / 'backups').exists()
+
+
+def test_unknown_database_scheme_is_rejected_before_filesystem_writes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match='PostgreSQL or SQLite'):
+        Database.open('mysql://localhost/cairn')
+    assert list(tmp_path.iterdir()) == []

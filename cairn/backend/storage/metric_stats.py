@@ -1,0 +1,242 @@
+"""``metric_stats``: a per-(run, metric) summary of the scalar points.
+
+Every read that shows a run's metrics as numbers (the runs table's values
+and stats columns, ``summary=`` rules, ``Run.final``, query predicates on
+``metrics.x``) needs the same few aggregates of a series: count, sum, min,
+max, and the values at the first and last step. Computing them at read time
+scans every point of every run on the page, so its cost grows with the
+length of the histories. This table holds them instead, maintained in the
+same transaction as the point writes.
+
+Semantics are exactly those of the scans it replaces: only points with a
+scalar value count (media points, and NaN, which SQLite stores as NULL,
+are ignored), and ``first``/``last`` are the values at the lowest/highest
+step, whatever order the points arrived in.
+
+It is a derived index, never a source of truth:
+
+* ``apply_inserted`` folds in points a write actually inserted (points are
+  ``ON CONFLICT DO NOTHING``, so a re-sent point must not count twice);
+* ``rebuild_metric_stats`` recomputes runs from their points, for every
+  operation that deletes or copies history (rewind, fork, archive import);
+* ``backfill_metric_stats`` builds the whole table once for a repo written
+  before it existed.
+
+``monotonic`` says whether the values never decrease along the steps (the
+scalar chart lists a metric that does as "not monotonically increasing" when
+offering it as the x-axis). Ingest folds a batch in when it lands wholly
+after (or before) the stored steps; a batch interleaved with them leaves it
+NULL for a moment and ``fill_monotonic`` rescans that one series.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import sqlite3
+import time
+from collections import Counter
+from collections.abc import Iterable, Sequence
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+
+def _sum(values: list[float]) -> float:
+    """Correctly rounded sum; NaN (bound as NULL, like SQLite's SUM) when
+    +inf and -inf cancel."""
+    try:
+        return math.fsum(values)
+    except ValueError:  # -inf + inf
+        return math.nan
+    except OverflowError:  # finite values summing past the float range
+        return sum(values)
+
+
+#: 1 when a row's series never decreases along its steps, else 0: a scan of
+#: the series' points (correlated on the ``metric_stats`` row being updated).
+_MONOTONIC_SCAN = """CASE WHEN NOT EXISTS (
+    SELECT 1 FROM (SELECT scalar_value AS v,
+                          LAG(scalar_value) OVER (ORDER BY step) AS p
+                     FROM sequences s
+                    WHERE s.run_id = metric_stats.run_id AND s.name = metric_stats.name
+                      AND s.scalar_value IS NOT NULL)
+     WHERE v < p) THEN 1 ELSE 0 END"""
+
+
+def fill_monotonic(con: sqlite3.Connection, where: str = "1=1", params: Sequence[Any] = ()) -> None:
+    """Scan the points of every row matching ``where`` whose ``monotonic``
+    is unknown (NULL) and store it."""
+    con.execute(
+        f"UPDATE metric_stats SET monotonic = {_MONOTONIC_SCAN} "
+        f"WHERE monotonic IS NULL AND ({where})",
+        list(params),
+    )
+
+
+def _non_decreasing(pts: list[tuple[int, float]]) -> bool:
+    """Whether the values of ``pts`` (step, value) never decrease by step."""
+    vals = [v for _, v in sorted(pts)]
+    return all(b >= a for a, b in zip(vals, vals[1:]))
+
+
+def apply_inserted(
+    con: sqlite3.Connection, run_id: str, inserted: Iterable[Sequence[Any]],
+) -> None:
+    """Fold newly inserted points ``(name, step, scalar_value)`` into
+    ``run_id``'s rows. Non-scalar points (``scalar_value`` None) are skipped.
+
+    One upsert per metric. A batch may arrive out of order relative to what
+    is stored: ``first`` moves only to a lower step, ``last`` only to a
+    higher one. SET expressions all see the row before the update.
+    ``monotonic`` extends when the batch lies wholly after or before the
+    stored steps; otherwise it is rescanned (``fill_monotonic``).
+    """
+    groups: dict[str, list[tuple[int, float]]] = {}
+    for name, step, value in inserted:
+        if value is not None:
+            groups.setdefault(name, []).append((step, value))
+    if not groups:
+        return
+    rows = []
+    for name, pts in groups.items():
+        values = [v for _, v in pts]
+        first = min(pts)
+        last = max(pts)
+        rows.append((
+            run_id, name, len(pts), _sum(values), min(values), max(values),
+            first[0], first[1], last[0], last[1], int(_non_decreasing(pts)),
+        ))
+    con.executemany(
+        """
+        INSERT INTO metric_stats (
+            run_id, name, count, sum, min, max,
+            first_step, first_value, last_step, last_value, monotonic
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (run_id, name) DO UPDATE SET
+            monotonic = CASE
+                WHEN metric_stats.monotonic IS NULL THEN NULL
+                WHEN excluded.first_step > metric_stats.last_step THEN
+                    CASE WHEN metric_stats.monotonic = 1 AND excluded.monotonic = 1 AND excluded.first_value >= metric_stats.last_value THEN 1 ELSE 0 END
+                WHEN excluded.last_step < metric_stats.first_step THEN
+                    CASE WHEN metric_stats.monotonic = 1 AND excluded.monotonic = 1 AND excluded.last_value <= metric_stats.first_value THEN 1 ELSE 0 END
+                ELSE NULL END,
+            count = metric_stats.count + excluded.count,
+            sum = metric_stats.sum + excluded.sum,
+            min = CASE WHEN metric_stats.min < excluded.min THEN metric_stats.min ELSE excluded.min END,
+            max = CASE WHEN metric_stats.max > excluded.max THEN metric_stats.max ELSE excluded.max END,
+            first_value = CASE WHEN excluded.first_step < metric_stats.first_step THEN excluded.first_value ELSE metric_stats.first_value END,
+            first_step = CASE WHEN excluded.first_step < metric_stats.first_step THEN excluded.first_step ELSE metric_stats.first_step END,
+            last_value = CASE WHEN excluded.last_step > metric_stats.last_step THEN excluded.last_value ELSE metric_stats.last_value END,
+            last_step = CASE WHEN excluded.last_step > metric_stats.last_step THEN excluded.last_step ELSE metric_stats.last_step END
+        """,
+        rows,
+    )
+    fill_monotonic(con, "run_id = ?", [run_id])
+
+
+def rebuild_metric_stats(con: sqlite3.Connection, run_ids: Sequence[str]) -> None:
+    """Recompute ``run_ids``' rows from their points (run inside the
+    caller's transaction). A run without scalar points ends with no rows."""
+    run_ids = list(run_ids)
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i:i + 500]
+        holes = ",".join("?" * len(chunk))
+        con.execute(f"DELETE FROM metric_stats WHERE run_id IN ({holes})", chunk)
+        con.execute(
+            f"""
+            INSERT INTO metric_stats (
+                run_id, name, count, sum, min, max,
+                first_step, first_value, last_step, last_value
+            )
+            SELECT g.run_id, g.name, g.count, g.sum, g.min, g.max,
+                   g.first_step, f.scalar_value, g.last_step, l.scalar_value
+              FROM (SELECT run_id, name, COUNT(*) AS count,
+                           SUM(scalar_value) AS sum,
+                           MIN(scalar_value) AS min, MAX(scalar_value) AS max,
+                           MIN(step) AS first_step, MAX(step) AS last_step
+                      FROM sequences
+                     WHERE run_id IN ({holes}) AND scalar_value IS NOT NULL
+                     GROUP BY run_id, name) g
+              JOIN sequences f
+                ON f.run_id = g.run_id AND f.name = g.name AND f.step = g.first_step
+              JOIN sequences l
+                ON l.run_id = g.run_id AND l.name = g.name AND l.step = g.last_step
+            """,
+            chunk,
+        )
+        fill_monotonic(con, f"run_id IN ({holes})", chunk)
+
+
+def backfill_metric_stats(con: sqlite3.Connection) -> None:
+    """Build the table for a repo whose points predate it: once, when it is
+    empty while ``sequences`` is not. Re-checked under the write lock, so two
+    processes opening the repo together build it once."""
+    if con.execute("SELECT 1 FROM metric_stats LIMIT 1").fetchone():
+        return
+    if not con.execute("SELECT 1 FROM sequences LIMIT 1").fetchone():
+        return
+    t0 = time.perf_counter()
+    run_ids: list[str] = []
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        if con.execute("SELECT 1 FROM metric_stats LIMIT 1").fetchone() is None:
+            run_ids = [r[0] for r in con.execute("SELECT id FROM runs")]
+            rebuild_metric_stats(con, run_ids)
+    except BaseException:
+        con.rollback()
+        raise
+    con.commit()
+    if not run_ids:
+        return
+    log.warning(
+        "cairn: built the metric_stats index for %d runs in %.1f s (one-time)",
+        len(run_ids), time.perf_counter() - t0,
+    )
+
+
+def insert_points(
+    con: sqlite3.Connection, run_id: str, rows: Sequence[Sequence[Any]],
+) -> list[Sequence[Any]]:
+    """``ON CONFLICT DO NOTHING`` sequence rows ``(name, step, wall_time,
+    object_type, scalar_value, artifact_hash, metadata)`` for ``run_id`` and
+    fold the ones actually inserted into ``metric_stats``. Run it inside the
+    caller's IMMEDIATE transaction: it reads before it writes.
+
+    Conflict retries keep the original point. RETURNING identifies exactly
+    the newly committed points on either supported database.
+
+    Returns the rows NOT inserted (their step was taken), in batch order.
+    """
+    if not rows:
+        return []
+    inserted = []
+    for start in range(0, len(rows), 1000):
+        chunk = rows[start:start + 1000]
+        placeholders = ', '.join('(?, ?, ?, ?, ?, ?, ?, ?)' for _ in chunk)
+        params = []
+        for row in chunk:
+            row = list(row)
+            row[4] = _stored(row[4])
+            params.extend((run_id, *row))
+        inserted.extend(con.execute(
+            "INSERT INTO sequences (run_id,name,step,wall_time,object_type,scalar_value,artifact_hash,metadata) VALUES "
+            + placeholders + " ON CONFLICT (run_id,name,step) DO NOTHING RETURNING name,step,scalar_value", params).fetchall())
+    apply_inserted(con, run_id, inserted)
+    fresh = Counter((name, step) for name, step, _ in inserted)
+    ignored: list[Sequence[Any]] = []
+    for r in rows:
+        if fresh[(r[0], r[1])] > 0:
+            fresh[(r[0], r[1])] -= 1
+        else:
+            ignored.append(r)
+    return ignored
+
+
+def _stored(value: Any) -> float | None:
+    """A portable scalar value: NaN becomes NULL,
+    an int becomes a float."""
+    if value is None:
+        return None
+    value = float(value)
+    return None if math.isnan(value) else value

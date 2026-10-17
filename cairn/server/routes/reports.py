@@ -1,276 +1,48 @@
-"""Server-side report persistence — CRUD for wandb-style report documents.
-
-Plain-dict responses, Pydantic request bodies only, secrets.token_hex(8)
-ids.
-
-* GET list is paginated (limit/offset bounded, like runs.py).
-* DELETE 404s when the report doesn't exist.
-"""
-
-from __future__ import annotations
-
-import json
-import re
-import secrets
-from typing import Any
-
+"""HTTP adapter for immutable report publications; source edits use workspaces."""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from cairn.backend import reports
+from cairn.backend.report_publications import PublicationConflict
+from cairn.server import auth
+from cairn.server.routes._common import get_db
 
-from .. import auth
-from ._common import get_db, utc_now
-
-router = APIRouter(prefix="/api", tags=["reports"])
-_write = Depends(auth.require_role("write"))
+router=APIRouter(prefix='/api',tags=['reports'])
 
 
-class ReportPayload(BaseModel):
-    """A report as markdown: prose plus ```cairn card fences."""
-
-    source: str
-
-
-class ReportCreate(BaseModel):
-    name: str
-    payload: ReportPayload
-
-
-class ReportUpdate(BaseModel):
-    name: str | None = None
-    payload: ReportPayload | None = None
-    # The ``updated_at`` the client last saw. When given and the report has
-    # changed since, the update is refused with 409 and the current report.
-    expected_updated_at: str | None = None
-
-
-def _parse_payload(raw: str) -> dict[str, Any]:
+def _read(call):
     try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
+        return call()
+    except LookupError as exc:
+        raise HTTPException(404,str(exc)) from exc
 
 
-_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*(.*)$")
+@router.get('/projects/{project_id}/reports')
+def list_reports(project_id: str, request: Request, limit: int=Query(50,ge=1,le=1000), offset: int=Query(0,ge=0)):
+    return reports.list_page(get_db(request),project_id,limit=limit,offset=offset)
 
 
-def _count_source_segments(source: str) -> int:
-    """Count a report's top-level blocks from its markdown `source`.
-
-    Approximates `lib/reports/markdown-source.ts`'s `splitFences`: a run of
-    prose lines is one block, and every ```cairn fence is its own block; any
-    other fenced code block stays embedded in its surrounding prose (not
-    split out), same as the TS splitter. Good enough for this list-page
-    badge — the TS parser stays the single source of truth for the actual
-    `blocks[]` a report compiles to.
-    """
-    lines = source.split("\n")
-    n = len(lines)
-    segments = 0
-    prose_buf: list[str] = []
-    i = 0
-
-    def flush_prose() -> None:
-        nonlocal segments
-        if prose_buf:
-            segments += 1
-            prose_buf.clear()
-
-    while i < n:
-        m = _FENCE_OPEN_RE.match(lines[i])
-        if not m:
-            prose_buf.append(lines[i])
-            i += 1
-            continue
-        run, info = m.group(1), m.group(2)
-        char, min_len = run[0], len(run)
-        lang = info.strip().split()[0] if info.strip() else ""
-        close_re = re.compile(rf"^ {{0,3}}{re.escape(char)}{{{min_len},}}[ \t]*$")
-        close_idx = next((j for j in range(i + 1, n) if close_re.match(lines[j])), -1)
-        closed = close_idx != -1
-        end_idx = close_idx if closed else n - 1
-
-        if lang == "cairn":
-            flush_prose()
-            segments += 1
-        else:
-            prose_buf.append("\n".join(lines[i : end_idx + 1]))
-        i = close_idx + 1 if closed else n
-
-    flush_prose()
-    return segments
+@router.get('/reports')
+def list_all_reports(request: Request, project: str|None=None, limit: int=Query(200,ge=1,le=1000), offset: int=Query(0,ge=0)):
+    return reports.list_page(get_db(request),project,limit=limit,offset=offset)
 
 
-def _block_count(payload: dict[str, Any]) -> int:
-    source = payload.get("source")
-    if isinstance(source, str) and source.strip():
-        return _count_source_segments(source)
-    return 0
+@router.get('/reports/{report_id}')
+def get_report_by_id(report_id: str, request: Request):
+    return _read(lambda: reports.read(get_db(request),report_id))
 
 
-@router.get("/projects/{project_id}/reports")
-def list_reports(
-    project_id: str,
-    request: Request,
-    limit: int = Query(default=50, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
-) -> dict[str, Any]:
-    db = get_db(request)
-    rows = db.read_columns(
-        """SELECT id, name, created_at, updated_at, payload
-           FROM reports WHERE project_id = ?
-           ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
-        [project_id, limit, offset],
-    )
-    (total,) = db.read_one(
-        "SELECT COUNT(*) FROM reports WHERE project_id = ?", [project_id]
-    ) or (0,)
-    result = []
-    for r in rows:
-        payload = _parse_payload(r["payload"])
-        result.append({
-            "id": r["id"],
-            "name": r["name"],
-            "updated_at": r["updated_at"],
-            "block_count": _block_count(payload),
-        })
-    return {"reports": result, "total": total, "limit": limit, "offset": offset}
+@router.get('/projects/{project_id}/reports/{report_id}')
+def get_report(project_id: str, report_id: str, request: Request):
+    return _read(lambda: reports.read(get_db(request),report_id,project=project_id))
 
 
-@router.get("/reports")
-def list_all_reports(
-    request: Request,
-    project: str | None = None,
-    limit: int = Query(default=200, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
-) -> dict[str, Any]:
-    """Reports of every project (or of ``project``), newest change first.
-    Rows as the per-project list's, plus ``project_id``."""
-    db = get_db(request)
-    where, params = ("WHERE project_id = ?", [project]) if project else ("", [])
-    rows = db.read_columns(
-        f"""SELECT id, project_id, name, created_at, updated_at, payload
-            FROM reports {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
-        [*params, limit, offset],
-    )
-    (total,) = db.read_one(f"SELECT COUNT(*) FROM reports {where}", params) or (0,)
-    return {
-        "reports": [
-            {
-                "id": r["id"],
-                "project_id": r["project_id"],
-                "name": r["name"],
-                "updated_at": r["updated_at"],
-                "block_count": _block_count(_parse_payload(r["payload"])),
-            }
-            for r in rows
-        ],
-        "total": total, "limit": limit, "offset": offset,
-    }
+@router.get('/reports/{report_id}/history')
+def history(report_id: str, request: Request, limit: int=Query(200,ge=1,le=1000), offset: int=Query(0,ge=0)):
+    return _read(lambda: reports.history(get_db(request),report_id,limit=limit,offset=offset))
 
 
-@router.get("/reports/{report_id}")
-def get_report_by_id(report_id: str, request: Request) -> dict[str, Any]:
-    """One report by id alone (ids are unique across projects): the
-    per-project route's answer, which names the project."""
-    rows = get_db(request).read_columns(
-        "SELECT project_id FROM reports WHERE id = ?", [report_id],
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"report {report_id} not found")
-    return get_report(rows[0]["project_id"], report_id, request)
-
-
-@router.get("/projects/{project_id}/reports/{report_id}")
-def get_report(project_id: str, report_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    rows = db.read_columns(
-        "SELECT * FROM reports WHERE id = ? AND project_id = ?",
-        [report_id, project_id],
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="report not found")
-    r = rows[0]
-    return {
-        "id": r["id"],
-        "project_id": r["project_id"],
-        "name": r["name"],
-        "created_at": r["created_at"],
-        "updated_at": r["updated_at"],
-        "payload": _parse_payload(r["payload"]),
-    }
-
-
-@router.post("/projects/{project_id}/reports", dependencies=[_write])
-def create_report(project_id: str, body: ReportCreate, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    if db.read_one("SELECT 1 FROM projects WHERE id = ?", [project_id]) is None:
-        raise HTTPException(status_code=404, detail=f"project {project_id} not found")
-    rid = secrets.token_hex(8)
-    now = utc_now().isoformat()
-    db.write(
-        """INSERT INTO reports (id, project_id, name, created_at, updated_at, payload)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        [rid, project_id, body.name, now, now, body.payload.model_dump_json()],
-    )
-    return {"id": rid, "name": body.name, "created_at": now}
-
-
-@router.put(
-    "/projects/{project_id}/reports/{report_id}", dependencies=[_write], response_model=None,
-)
-def update_report(
-    project_id: str, report_id: str, body: ReportUpdate, request: Request,
-) -> dict[str, Any] | JSONResponse:
-    db = get_db(request)
-    now = utc_now().isoformat()
-    with db.transaction(immediate=True) as con:
-        row = con.execute(
-            "SELECT name, updated_at, payload FROM reports WHERE id = ? AND project_id = ?",
-            [report_id, project_id],
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="report not found")
-        name, updated_at, payload = row
-        if body.expected_updated_at is not None and body.expected_updated_at != updated_at:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "detail": "report changed since expected_updated_at",
-                    "id": report_id,
-                    "name": name,
-                    "updated_at": updated_at,
-                    "payload": _parse_payload(payload),
-                },
-            )
-        if body.name is not None or body.payload is not None:
-            con.execute(
-                "UPDATE reports SET name = ?, payload = ?, updated_at = ? WHERE id = ?",
-                [
-                    body.name if body.name is not None else name,
-                    body.payload.model_dump_json() if body.payload is not None else payload,
-                    now, report_id,
-                ],
-            )
-            updated_at = now
-    return {"id": report_id, "updated_at": updated_at}
-
-
-@router.delete("/projects/{project_id}/reports/{report_id}", dependencies=[_write])
-def delete_report(project_id: str, report_id: str, request: Request) -> dict[str, Any]:
-    db = get_db(request)
-    rows = db.read_columns(
-        "SELECT id FROM reports WHERE id = ? AND project_id = ?",
-        [report_id, project_id],
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="report not found")
-    # Children first, each its own statement (foreign keys are enforced).
-    # Asset blobs stay: the store is content-addressed and not ref-counted.
-    for table in ("comments", "report_assets", "report_shares"):
-        db.write(f"DELETE FROM {table} WHERE report_id = ?", [report_id])
-    db.write(
-        "DELETE FROM reports WHERE id = ? AND project_id = ?",
-        [report_id, project_id],
-    )
-    return {"deleted": report_id}
+@router.delete('/reports/{report_id}',dependencies=[Depends(auth.require_auth)])
+def delete_report(report_id: str, request: Request, expected_version: str=Query(...)):
+    try:
+        return _read(lambda: reports.delete(get_db(request),report_id,expected_version=expected_version))
+    except PublicationConflict as exc:
+        raise HTTPException(409,str(exc)) from exc

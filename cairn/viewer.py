@@ -1,9 +1,8 @@
 """The one module that knows where the cairn-ui viewer bundle lives.
 
-`cairn-track` ships NO UI assets. The viewer is a separate, data-only
-distribution (`cairn-ui`, via ``pip install 'cairn-track[ui]'``). Nothing else
-under ``cairn/`` may name the bundle's path, its environment override, or its
-file layout — enforced by ``tests/unit/test_package_boundaries.py``.
+The matching browser runtime ships in the tracker wheel. Source checkouts use
+the built viewer under vendor/cairn-ui; the optional cairn-ui distribution also
+supplies Python notebook-card builders. Only this module resolves runtime paths.
 
 Stdlib only, deliberately: this must not widen any import closure.
 """
@@ -112,7 +111,10 @@ def dist_path() -> Path | None:
     """
     if os.environ.get(_ENV_OVERRIDE):
         return _from_env()
-    return _from_installed_package() or _from_dev_checkout()
+    bundled = Path(__file__).resolve().parent / '_web'
+    if _is_complete(bundled):
+        return bundled
+    return _from_dev_checkout() or _from_installed_package()
 
 
 def is_available() -> bool:

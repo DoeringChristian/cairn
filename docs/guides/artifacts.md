@@ -294,7 +294,7 @@ See [Reading data back](reading.md) for the reader.
 ## From the command line
 
 `cairn artifact` reads and curates the registry of a server or of a local
-repo without one (see [Client commands](server.md#client-commands)). A ref is
+repo without one (see [CLI reference](../reference/cli.md)). A ref is
 `[PROJECT/]NAME[:ALIAS|:vN]`, as in `Reader.artifact`; a bare name means
 `NAME:latest`, and `--project P` stands in for the `PROJECT/` part.
 

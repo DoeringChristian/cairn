@@ -15,8 +15,8 @@ import cairn
 from cairn.sdk import sweep as sweep_mod
 from cairn.sdk.connect import open_writer
 from cairn.sdk.sweep import expand_command
-from cairn.server import sweep_ops
-from cairn.server.storage.db import Database
+from cairn.backend import sweep_ops
+from cairn.backend.storage.db import Database
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -182,7 +182,7 @@ def test_lifecycle_transitions(db, status, action):
 
 
 def test_stop_lets_running_trials_finish(db):
-    from cairn.server import ingest_ops
+    from cairn.backend import ingest_ops
 
     sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}})
     t = sweep_ops.next_trial(db, sw["id"])["trial"]
@@ -195,7 +195,7 @@ def test_stop_lets_running_trials_finish(db):
 
 
 def test_cancel_kills_running_trials_and_stops_their_runs(db):
-    from cairn.server import ingest_ops
+    from cairn.backend import ingest_ops
 
     sw = sweep_ops.create_sweep(db, project="p", space={"a": {"min": 0.0, "max": 1.0}})
     done, running, unjoined = (sweep_ops.next_trial(db, sw["id"])["trial"] for _ in range(3))
@@ -263,7 +263,7 @@ def test_check_keys():
 
 
 def test_report_links_the_first_run_and_reads_the_metric(db):
-    from cairn.server import ingest_ops
+    from cairn.backend import ingest_ops
 
     sw = sweep_ops.create_sweep(db, project="p", space={"a": 1}, metric="loss", goal="minimize")
     t = sweep_ops.next_trial(db, sw["id"])["trial"]

@@ -147,7 +147,7 @@ def test_catalogue_reports_the_kind(tmp_path):
         run.track([cairn.Data([1], kind="g/x"), cairn.Data([2], kind="g/x")], "gal", 0)
         run.track(cairn.Tensor(np.ones(2)), "t", 0)
         run.track(0.5, "loss", 0)
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         seqs = {s["name"]: s for s in client.get(f"/api/runs/{run.id}/sequences").json()["sequences"]}
         assert seqs["guide"]["object_type"] == "custom"
         assert seqs["guide"]["kind"] == "guiding/vmf"  # the latest point's

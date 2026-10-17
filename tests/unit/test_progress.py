@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 
 import cairn
-from cairn.server import progress
-from cairn.server.storage.migrations import apply_migrations
+from cairn.backend import progress
+from cairn.backend.storage.migrations import UnsupportedSchema, apply_migrations
 
 _RUN_KW = {
     "capture_source": False,
@@ -112,18 +112,15 @@ def test_run_progress_shapes():
 # ---- migration -------------------------------------------------------------------
 
 
-def test_migration_adds_progress_columns(tmp_path):
-    con = sqlite3.connect(str(tmp_path / "old.db"))
-    con.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
-                "display_name TEXT, created_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL)")
-    con.execute("INSERT INTO runs VALUES ('r', 'p', NULL, '2026-01-01', NULL, 'completed')")
-    con.commit()
-    apply_migrations(con)
-    cols = {r[1] for r in con.execute("PRAGMA table_info(runs)")}
-    assert set(progress.COLUMNS) <= cols
-    assert con.execute("SELECT total_steps, max_step FROM runs").fetchone() == (None, None)
-    apply_migrations(con)  # idempotent
-    con.close()
+def test_unversioned_progress_data_requires_explicit_conversion(tmp_path):
+    with sqlite3.connect(tmp_path / "old.db") as con:
+        con.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT)")
+        con.execute("INSERT INTO runs VALUES ('r','completed')")
+        con.commit()
+        before = list(con.iterdump())
+        with pytest.raises(UnsupportedSchema, match='no Cairn schema version'):
+            apply_migrations(con)
+        assert list(con.iterdump()) == before
 
 
 # ---- local runs (through the repo's server) ------------------------------------------------------
@@ -191,8 +188,8 @@ def test_progress_validation(tmp_path):
 
 def test_local_eta_from_point_wall_times(tmp_path):
     """Points carry the client's wall time; the ETA comes from them."""
-    from cairn.server import ingest_ops
-    from cairn.server.storage.db import Database
+    from cairn.backend import ingest_ops
+    from cairn.backend.storage.db import Database
 
     db = Database.open(tmp_path / "db.sqlite")
     ingest_ops.create_run(db, project="p", run_id="r")
@@ -216,8 +213,8 @@ def test_local_eta_from_point_wall_times(tmp_path):
 
 
 def test_explicit_progress_eta(tmp_path):
-    from cairn.server import ingest_ops
-    from cairn.server.storage.db import Database
+    from cairn.backend import ingest_ops
+    from cairn.backend.storage.db import Database
 
     db = Database.open(tmp_path / "db.sqlite")
     ingest_ops.create_run(db, project="p", run_id="r")

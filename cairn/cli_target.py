@@ -1,16 +1,4 @@
-"""Where a CLI command reads and writes: a local repo or a server.
-
-Every command that touches data takes ``--repo`` and ``--server`` and
-resolves them with ``cairn.config.resolve_target`` (the order ``cairn.Run``
-and ``cairn.Reader`` use): an explicit ``--repo``/``--server``, then
-``CAIRN_REPO``/``CAIRN_SERVER``, then the config file, then ``./.cairn``.
-
-``open_api`` hands a command an HTTP client for the target's server
-(``cairn.endpoint.resolve_endpoint``): a server URL with its token, or, for
-a local repo, the server serving it on this machine (started in the
-background when none is), with the repo's same-user token. No command opens
-a repo's database itself.
-"""
+"""Shared CLI destination options: a local repo or remote server."""
 
 from __future__ import annotations
 
@@ -82,69 +70,3 @@ def reader_location(repo: str | None, server: str | None) -> tuple[str, str]:
         return str(loc), str(loc)
     root = require_repo(loc)
     return str(root), str(root)
-
-
-class Api:
-    """An HTTP client for the command's target (see the module docstring).
-
-    ``get``/``post``/``delete``/``request`` return the response and raise for
-    an error status (the CLI's one-line HTTP error handler reports it).
-    ``local_root`` is the local repo when the target is one.
-    """
-
-    def __init__(self, target: _config.RunTarget) -> None:
-        from .endpoint import EndpointUnavailable, local_endpoint, resolve_endpoint
-
-        self.target = target
-        self.local_root: Path | None = None
-        if target.is_local:
-            self.local_root = require_repo(target.location)
-            try:
-                endpoint = local_endpoint(self.local_root)
-            except EndpointUnavailable as exc:
-                raise click.ClickException(str(exc)) from None
-        else:
-            endpoint = resolve_endpoint(repo=target.location)
-        self.endpoint = endpoint
-        self.base = endpoint.url
-        self.token = endpoint.token
-        self._client = self._http_client(self.base, endpoint.token)
-
-    @staticmethod
-    def _http_client(base: str, token: str | None) -> Any:
-        import httpx
-
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        return httpx.Client(base_url=base, headers=headers, timeout=httpx.Timeout(30.0, read=600.0))
-
-    @property
-    def label(self) -> str:
-        """The target as shown in messages: the repo path or the server URL."""
-        return str(self.local_root) if self.local_root is not None else self.base
-
-    def request(self, method: str, path: str, **kwargs: Any) -> Any:
-        resp = self._client.request(method, path, **kwargs)
-        resp.raise_for_status()
-        return resp
-
-    def get(self, path: str, params: Any = None) -> Any:
-        return self.request("GET", path, params=params)
-
-    def post(self, path: str, **kwargs: Any) -> Any:
-        return self.request("POST", path, **kwargs)
-
-    def delete(self, path: str, **kwargs: Any) -> Any:
-        return self.request("DELETE", path, **kwargs)
-
-    def close(self) -> None:
-        self._client.close()
-
-    def __enter__(self) -> Api:
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
-
-
-def open_api(repo: str | None, server: str | None) -> Api:
-    return Api(resolve(repo, server))

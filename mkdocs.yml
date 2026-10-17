@@ -84,6 +84,7 @@ nav:
       - Notebooks: guides/notebooks.md
       - Import and export: guides/import-export.md
       - Run directories, syncing and backup: guides/run-directories.md
+      - Storage architecture and migration: guides/storage-architecture.md
       - Server, auth and deployment: guides/server.md
   - Web UI:
       - ui/index.md

@@ -7,9 +7,9 @@ import httpx
 import pytest
 
 import cairn
-from cairn.server import artifact_registry_ops
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend import artifact_registry_ops
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 from tests.conftest import ingest_repo
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,

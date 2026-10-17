@@ -27,7 +27,7 @@ class LegacyLog:
             fh.write(json.dumps({"seq": self.seq, "op": op, "payload": payload}) + "\n")
 
     def create(self, project: str = "p", **fields: Any) -> None:
-        from cairn.server.ingest_ops import slugify
+        from cairn.backend.ingest_ops import slugify
 
         self.write("create_run", {
             "run_id": self.run_id, "project": project, "project_id": slugify(project),
@@ -39,8 +39,8 @@ class LegacyLog:
                               "ended_at": datetime.now(timezone.utc).isoformat()})
 
     def blob(self, data: bytes, mime: str = "application/octet-stream") -> str:
-        from cairn.server.storage.blobs import BlobStore
-        from cairn.server.storage.datadir import DataDir
+        from cairn.backend.storage.blobs import BlobStore
+        from cairn.backend.storage.datadir import DataDir
 
         digest, _ = BlobStore(DataDir(self.repo).artifacts_dir).put(data)
         self.write("artifact_meta", {"hash": digest, "mime_type": mime, "size_bytes": len(data),

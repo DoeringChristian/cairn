@@ -22,8 +22,8 @@ def _ingest_client(run_dir: Any) -> Any:
 
     meta = run_dir.meta()
     if meta.get("endpoint") in (None, "local"):
-        ep = resolve_endpoint(repo=meta["repo"])
-        return IngestClient(ep.url, ep.token, timeout=10)
+        from cairn.uploader.local import LocalIngestClient
+        return LocalIngestClient(meta["repo"])
     url = meta["endpoint"]
     return IngestClient(url, meta.get("token") or config.resolve_token(url), timeout=10)
 
@@ -54,7 +54,10 @@ def sync_repo(repo: str | Path) -> None:
         except Exception:  # noqa: BLE001
             pass
     want = str(Path(repo).resolve())
-    for rd in iter_run_dirs(cairn_dir()) if os.environ.get("CAIRN_DIR") else []:
+    roots = {Path(repo).resolve()}
+    if os.environ.get("CAIRN_DIR"):
+        roots.add(cairn_dir().resolve())
+    for rd in (rd for root in roots for rd in iter_run_dirs(root)):
         if rd.meta().get("repo") == want:
             try:
                 sync_now(rd)
@@ -76,6 +79,7 @@ def install(monkeypatch: Any) -> None:
             except Exception:  # noqa: BLE001 - a test server that is down
                 pass
 
-        self.log._on_commit = on_commit
+        if self._local_client is None:
+            self.log._on_commit = on_commit
 
     monkeypatch.setattr(RunWriter, "__init__", init)

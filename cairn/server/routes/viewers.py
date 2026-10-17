@@ -2,7 +2,7 @@
 
 * ``GET /api/projects/{p}/viewers[?all_versions=1]`` -> ``{viewers: [entry]}``:
   published viewers (artifact families of type ``cairn-viewer``) plus live
-  dev sources (``dev: true``). See ``cairn.server.custom_viewers``.
+  dev sources (``dev: true``). See ``cairn.backend.custom_viewers``.
 * Dev sources (write role to change, read role to read; never share links):
   ``POST .../viewers/dev/{name}`` declares the file set (and heartbeats),
   ``PUT .../viewers/dev/{name}/file?path=&session=`` uploads one file,
@@ -12,7 +12,7 @@
 * Built-in viewers (shipped with the UI bundle, named ``cairn.<name>``) lead
   every list (``builtin: true``); ``GET /api/viewers/builtin/{name}/files``
   and ``.../file?path=`` read them (share links too: they are part of the app).
-* Default viewers (``cairn.server.viewer_defaults``): ``GET
+* Default viewers (``cairn.backend.viewer_defaults``): ``GET
   .../viewer-defaults`` -> ``{defaults: {key: viewer}, builtin: {key:
   viewer}}`` (the project's, and the built-in viewers'; read role, share
   links too); ``PUT .../viewer-defaults`` with ``{kind, viewer}`` sets one
@@ -30,14 +30,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .. import auth, viewer_defaults
-from ..custom_viewers import DevError, builtin_defaults, builtin_viewers, dev_store_for, published_viewers
-from ..viewer_manifest import mime_for
-from ._common import get_data_dir, get_db, slugify
+from cairn.server import auth
+from cairn.backend import viewer_defaults
+from cairn.backend.custom_viewers import DevError, builtin_defaults, builtin_viewers, dev_store_for, published_viewers
+from cairn.backend.viewer_manifest import mime_for
+from cairn.server.routes._common import get_data_dir, get_db
+from cairn.backend.common import slugify
 from .artifacts import UNTRUSTED_CONTENT_HEADERS
 
 router = APIRouter(prefix="/api", tags=["viewers"])
-_write = Depends(auth.require_role("write"))
+_write = Depends(auth.require_auth)
 
 
 def _project(project_id: str) -> str:
@@ -66,10 +68,6 @@ def list_viewers(project_id: str, request: Request, all_versions: bool = False) 
     project = _project(project_id)
     db = get_db(request)
     builtins = [v.entry() for v in builtin_viewers().values()]
-    grant = auth.request_share(request)
-    if grant is not None:
-        scope = auth.share_scope(request, grant)
-        return {"viewers": builtins + published_viewers(db, project, version_ids=scope.viewer_versions)}
     viewers = builtins + published_viewers(db, project, all_versions=all_versions)
     viewers += _store(request).entries(project)
     return {"viewers": viewers}

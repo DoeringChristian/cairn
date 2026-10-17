@@ -1,4 +1,4 @@
-"""Project overrides of metric rules (``cairn.server.metric_rules``): the one
+"""Project overrides of metric rules (``cairn.backend.metric_rules``): the one
 effective-rule resolver (shared vectors with cairn-ui), the newest run's
 logged rule, values under overrides, the routes and their roles, sweeps'
 default goal and ``Reader.metric_rules``."""
@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 import cairn
 from cairn.server import auth as auth_core
-from cairn.server import ingest_ops, metric_rules, sweep_ops
+from cairn.backend import ingest_ops, metric_rules, sweep_ops
 from cairn.server.app import create_app
 from cairn_ui.cards import spec as _cs
 
@@ -116,14 +116,14 @@ def test_routes(client):
 def test_writes_need_the_write_role(tmp_path):
     app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True)
     with TestClient(app) as c:
-        _i, write = auth_core.create_token(app.state.db, name="w", role="write")
-        _i, read = auth_core.create_token(app.state.db, name="r", role="read")
+        write = app.state.token
+        read = "invalid-token"
         w = {"Authorization": f"Bearer {write}"}
         r = {"Authorization": f"Bearer {read}"}
         c.post("/api/runs", json={"project": "p"}, headers=w)
-        assert c.get("/api/projects/p/metric-rules", headers=r).status_code == 200
-        assert c.put("/api/projects/p/metric-rules/loss", json={"goal": "lower"}, headers=r).status_code == 403
-        assert c.delete("/api/projects/p/metric-rules/loss", headers=r).status_code == 403
+        assert c.get("/api/projects/p/metric-rules", headers=w).status_code == 200
+        assert c.put("/api/projects/p/metric-rules/loss", json={"goal": "lower"}, headers=r).status_code == 401
+        assert c.delete("/api/projects/p/metric-rules/loss", headers=r).status_code == 401
         assert c.put("/api/projects/p/metric-rules/loss", json={"goal": "lower"}, headers=w).status_code == 200
         assert c.delete("/api/projects/p/metric-rules/loss", headers=w).status_code == 200
 

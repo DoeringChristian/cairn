@@ -62,9 +62,47 @@ def test_artifact_versions_and_config_docs_survive_export(client, tmp_path):
 
 def test_archive_gallery_mime_matches_the_sdk():
     from cairn.sdk.gallery import GALLERY_MIME
-    from cairn.server import artifact_refs
+    from cairn.backend import artifact_refs
 
     assert artifact_refs.GALLERY_MIME == GALLERY_MIME
+
+
+def test_equal_content_versions_and_creation_receipts_remain_distinct(client, tmp_path):
+    import cairn
+    from cairn.backend import artifact_registry_ops, revisions
+
+    rid = client.post('/api/runs', json={'project': 'p', 'name': 'producer'}).json()['run_id']
+    digest = _upload(client, b'{"files":[]}')
+    original = []
+    for index in (1, 2):
+        response = client.post('/api/projects/p/artifact-versions', json={
+            'name': 'same-content', 'digest': digest, 'created_by_run': rid,
+            'metadata': {'measurement': index}, 'aliases': ['selected-'+str(index)],
+        })
+        assert response.status_code == 200, response.text
+        original.append(response.json()['id'])
+    # Console history is authoritative even when no file projection exists.
+    db = client.app.state.db
+    db.write('INSERT INTO log_lines(run_id,stream,wall_time,line_no,content,label) VALUES(?,?,?,?,?,?)',
+             [rid, 'stdout', '2026-01-01', 0, 'captured output', None])
+    exported = client.post('/api/export', json={'run_ids': [rid]})
+    path = tmp_path/'versions.zip'
+    path.write_bytes(exported.content)
+    with cairn.Reader(repo=path) as reader:
+        versions = reader.run(rid).logged_artifacts()
+        assert {version.id for version in versions} == set(original)
+        assert [line.content for line in reader.run(rid).logs()] == ['captured output']
+
+    new_run = _roundtrip(client, [rid])[rid]
+    rows = db.read_columns('SELECT id FROM artifact_versions WHERE created_by_run=? ORDER BY version', [new_run])
+    assert len(rows) == 2
+    assert {row['id'] for row in rows}.isdisjoint(original)
+    for row in rows:
+        request = revisions.get(db, 'artifact-created', row['id'], 1)
+        assert request['created_by_run'] == new_run
+        replay = artifact_registry_ops.create_version(db, client.app.state.blobs, version_id=row['id'], **request)
+        assert replay['id'] == row['id']
+    assert db.read_one('SELECT COUNT(*) FROM artifact_versions')[0] == 4
 
 
 def _seed_lineage(client) -> dict[str, str]:

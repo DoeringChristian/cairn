@@ -48,7 +48,7 @@ def local_viewer(root: Path) -> str | None:
     import httpx
 
     from ..server.registration import read_info
-    from ..server.storage.datadir import read_live_servers
+    from cairn.backend.storage.datadir import read_live_servers
 
     candidates = []
     info = read_info(root)

@@ -27,7 +27,7 @@ a keyword:
 | `tags`, `notes` | `None` | See [tags and notes](logging.md#tags-and-notes). |
 | `group` | `None` | Groups related runs, such as the seeds of one configuration or the steps of one experiment. |
 | `job_type` | `None` | The run's role within its group, such as `"train"`, `"eval"` or `"finetune"`. |
-| `repo` | resolved | Where to log. See [how cairn picks a destination](../getting-started.md#how-cairn-picks-a-destination). |
+| `repo` | resolved | Where to log. See [how cairn picks a destination](../reference/configuration.md#where-runs-are-written-and-read). |
 | `mode` | resolved | `"disabled"` makes the run a no-op. See [disabled runs](#disabled-runs). |
 | `resume`, `rewind_to`, `fork_from` | `None` | [Continue or branch an existing run](#resume-rewind-and-fork). |
 | `run_id` | `CAIRN_RUN_ID`, else fresh | The new run's ID. See [several processes, one run](#several-processes-one-run). |
@@ -39,7 +39,7 @@ a keyword:
 | `system_metrics_include_per_core` | `False` | Also record per-core CPU utilisation. |
 | `source_root`, `source_include`, `source_exclude`, `source_max_file_size_mb` | auto, defaults, defaults, `1.0` | What the source snapshot contains. |
 | `created_at` | now | Override the creation time, for example when importing historical runs. |
-| `timeout` | `10.0` | HTTP timeout in seconds of the reads a run needs from the server (resuming a run that is not on this machine, resolving an artifact ref, sweeps). How long `finish()` waits for the upload is `CAIRN_FINISH_TIMEOUT` (see [Run directories](run-directories.md#the-uploader)). |
+| `timeout` | `10.0` | HTTP timeout in seconds of the reads a run needs from the server (resuming a run that is not on this machine, resolving an artifact ref, sweeps). How long `finish()` waits for the upload is `CAIRN_FINISH_TIMEOUT` (see [Run directories](run-directories.md)). |
 
 `group` and `job_type` are shown on the run page (Overview, next to each other), and in the runs
 table and the workspace you can filter and group by them (group, then job type). They are also
@@ -322,11 +322,10 @@ run.alert("Loss diverged", f"loss={loss:.3g} at step {step}", level="error")
 ```
 
 `level` is `"info"`, `"warn"` or `"error"`. Alerts appear in the UI (the project's bell and a
-banner on the run page). If the server was started with `--alert-webhook URL` (or
-`CAIRN_ALERT_WEBHOOK`), each alert is also posted to that URL. Supported targets are ntfy topics,
-Slack and Discord webhooks, and any endpoint that accepts JSON. Runs that end `failed` or
-`killed` raise an alert automatically. Alerts written while no server is running are delivered
-when one next starts on the repo.
+banner on the run page). Runs that end `failed` or `killed` raise an alert
+automatically. A custom Python server can set `create_app(alert_webhook=URL)`
+to forward alerts to ntfy, Slack, Discord or another JSON webhook. The standard
+CLI keeps alerts in the UI.
 
 cairn also raises a `warn` alert when it drops points, once per run and series, naming the
 series and the step:
@@ -385,8 +384,8 @@ caches, build output, `.git` and `.cairn`, skips files over 1 MB, and respects t
 `.gitignore`. Override this with `source_root`, `source_include`, `source_exclude` (glob
 patterns that replace the defaults) and `source_max_file_size_mb`.
 
-The snapshot appears on the run page's **Files** tab. `cairn diff RUN_ID` compares your current
-working directory with it.
+The snapshot appears on the run page's **Files** tab. Python readers expose
+`run.source_tree()` and `run.source_file(path)` for inspecting captured files.
 
 ## Disabled runs
 
@@ -418,8 +417,9 @@ run.summary(showcase={
 Each media value is ONE value with no step, named by its key's dotted path
 (`showcase.loss_landscape`, `showcase.samples`):
 
-- **Writing the key again replaces it.** The run keeps only the newest value; the old bytes are no
-  longer referenced and [`cairn gc`](server.md#garbage-collection) frees them.
+- **Writing the key again replaces it.** The summary key selects the newest value;
+  it no longer selects the previous bytes. Replacing a value does not promise immediate
+  removal of its stored bytes.
 - **Deleting the key removes it**: `reader.run(id).edit().delete_keys("summary", ["showcase"])`.
 - **Cards show it like a tracked series** of that name: it gets an automatic panel, the add-card
   flow offers it, the project workspace and reports pick it up. Its card has no step slider. The run's

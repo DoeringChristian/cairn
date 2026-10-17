@@ -1,4 +1,4 @@
-"""Run sets (``cairn.server.run_sets``) mirror cairn-ui ``src/lib/run-sets.ts``:
+"""Run sets (``cairn.backend.run_sets``) mirror cairn-ui ``src/lib/run-sets.ts``:
 both run the vectors committed in cairn-ui at
 ``docs/schemas/run-set-vectors.json``."""
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cairn.server import run_sets as rs
+from cairn.backend import run_sets as rs
 from cairn_ui.cards import spec as _cs
 
 _VECTORS = Path(_cs.__file__).resolve().parents[2] / "docs" / "schemas" / "run-set-vectors.json"

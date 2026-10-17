@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 from urllib.parse import urljoin, urlsplit
 
-from ..server.viewer_manifest import MANIFEST_FILE, MAX_FOLDER_BYTES
+from cairn.backend.viewer_manifest import MANIFEST_FILE, MAX_FOLDER_BYTES
 
 #: Where builds come from.
 ESM_CDN = "https://esm.sh"

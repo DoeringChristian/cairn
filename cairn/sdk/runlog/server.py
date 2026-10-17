@@ -1,12 +1,6 @@
-"""Reads a run needs from its server (the write path never does).
+"""Lazy lifecycle and artifact reads from the run's selected backend.
 
-A ``cairn.Run`` writes only its run directory. A few things need the
-server's answer: resuming or forking a run whose directory is not on this
-machine, resolving an artifact ref, sweep trials, the run's version, stop
-requests. ``ServerReads`` makes those calls over HTTP, resolving the
-endpoint lazily (``cairn.endpoint.resolve_endpoint``, which may start a
-repo's local server), and raises ``ServerUnavailable`` when it cannot.
-``peek`` never starts anything: it is for background polling.
+Local reads open the repo directly; remote reads use HTTP. No process is spawned.
 """
 
 from __future__ import annotations
@@ -36,7 +30,7 @@ class ServerReads:
         self._peek: Any = None
 
     def describe(self) -> str:
-        return self.server or f"the server of the repo {self.repo}"
+        return self.server or f"local repo {self.repo}"
 
     def api(self) -> Any:
         """An HTTP ``Transport`` to the endpoint.
@@ -46,14 +40,11 @@ class ServerReads:
         """
         if self._api is not None:
             return self._api
-        from ...endpoint import resolve_endpoint
-        from ..transport import Transport
-
+        from ..connect import open_writer
         try:
-            ep = resolve_endpoint(server=self.server, repo=None if self.server else self.repo)
-        except Exception as exc:  # noqa: BLE001
-            raise ServerUnavailable(f"cannot reach {self.describe()}: {exc}") from None
-        self._api = Transport(ep.url, timeout=self._timeout, token=ep.token)
+            self._api, _ = open_writer(self.server or self.repo, timeout=self._timeout)
+        except Exception as exc:
+            raise ServerUnavailable(f'cannot open {self.describe()}: {exc}') from exc
         return self._api
 
     def peek(self) -> Any | None:
@@ -64,20 +55,10 @@ class ServerReads:
             return self._api
         if self._peek is not None:
             return self._peek
-        from ... import config
+        if not self.server:
+            return self.api()
         from ..transport import Transport
-
-        url: str | None = None
-        token: str | None = None
-        if self.server:
-            url = self.server
-        elif self.repo:
-            info = _live_repo_server(Path(self.repo))
-            if info is not None:
-                url, token = info
-        if url is None:
-            return None
-        self._peek = Transport(url, timeout=3.0, token=token or config.resolve_token(url))
+        self._peek = Transport(self.server, timeout=3.0, max_retries=1)
         return self._peek
 
     def close(self) -> None:
@@ -101,16 +82,7 @@ class ServerReads:
 
     def run(self, run_id: str) -> dict[str, Any] | None:
         """``GET /api/runs/{id}`` (None: the server does not know the run)."""
-        import httpx
-
-        def get(t: Any) -> Any:
-            try:
-                return t.get(f"/api/runs/{run_id}").json()
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    return None
-                raise
-        return self._call(f"reading run {run_id}", get)
+        return self._call(f'reading run {run_id}', lambda t: t.read_run(run_id))
 
     def sequences(self, run_id: str) -> list[dict[str, Any]]:
         return self._call(f"reading run {run_id}", lambda t: t.sequence_steps(run_id))
@@ -134,26 +106,3 @@ def run_state(body: dict[str, Any]) -> dict[str, Any]:
         "config": body.get("config_doc") or {},
         "summary": body.get("summary_doc") or {},
     }
-
-
-def _live_repo_server(repo: Path) -> tuple[str, str | None] | None:
-    """``(url, token)`` of the live local server registered for ``repo`` in
-    ``<repo>/server.json`` (spec §5: pid, port, token), else None."""
-    try:
-        info = json.loads((repo / "server.json").read_text())
-    except (OSError, ValueError):
-        return None
-    if not isinstance(info, dict):
-        return None
-    pid = info.get("pid")
-    if isinstance(pid, int):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return None
-        except PermissionError:
-            pass
-    url = info.get("url")
-    if not url and isinstance(info.get("port"), int):
-        url = f"http://{info.get('host') or '127.0.0.1'}:{info['port']}"
-    return (str(url), info.get("token")) if url else None

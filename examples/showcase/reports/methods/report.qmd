@@ -1,0 +1,142 @@
+---
+title: Methods and provenance
+description: One destination, explicit evidence, reproducible reports.
+inputs:
+  data: "artifact:@DATASET@"
+  model: "artifact:@MODEL@"
+  fit: "run:@FAST@"
+---
+
+## Experimental setup
+
+The dataset follows $y = 2x + 0.1\sin(11x)$ on a fixed grid. Optimization minimizes
+
+$$L(w) = \frac{1}{N}\sum_{i=1}^{N}(wx_i-y_i)^2.$$
+
+```{python}
+#| echo: false
+import json
+from pathlib import Path
+from html import escape
+from IPython.display import display, HTML, Markdown, JSON
+
+def read_json(path):
+    return json.loads(Path(path).read_text())
+
+def read_series(folder, key):
+    return [event for line in (folder / "metrics.jsonl").read_text().splitlines()
+            if (event := json.loads(line)).get("name") == key]
+
+def report_html(markup):
+    display(HTML(markup))
+
+def metric(label, value, detail="", fmt=None):
+    shown = format(value, fmt) if fmt else str(value)
+    display(HTML(f'<div class="metric"><span>{escape(label)}</span><strong>{escape(shown)}</strong><small>{escape(detail)}</small></div>'))
+import csv
+with (inputs["data"] / "samples.csv").open() as f:
+    samples = list(csv.DictReader(f))
+weights = read_json(inputs["model"] / "weights.json")
+metric("Dataset rows", len(samples), "CSV captured from the dataset artifact")
+metric("Selected weight", weights["weight"], "Captured model checkpoint", fmt=".4f")
+```
+
+## Python workflow
+
+```python
+import cairn
+with cairn.init(project="study", config={"lr": 0.12}) as run:
+    cairn.define_metric("loss", summary="min")
+    cairn.log({"epoch": 0, "loss": 1.0}, commit=False)
+    cairn.log({"accuracy": 0.5})
+    run.summary["conclusion"] = "A first measurement"
+```
+
+The showcase also uses explicit `Run` methods, typed media, a versioned dataset, named model aliases, and Reader queries. All write operations select either a local path or a server URL. Local mode opens SQLite directly. Remote mode sends durable journal batches to the chosen server; its client buffer is not a second queryable repository.
+
+## Grid sweep
+
+```{python}
+#| echo: false
+from html import escape
+sweep = read_json(Path("sweep.json"))
+metric("Trials", len(sweep["trials"]), "Grid over the three learning rates")
+report_html('<pre>' + escape(str(sweep["best"])) + '</pre>')
+```
+
+The sweep uses a small deterministic surrogate objective to demonstrate trial scheduling and best-trial selection independently of the comparison runs. [Open sweeps](/p/@PROJECT@/sweeps).
+
+## Publication and sharing
+
+1. Finish the evidence-producing runs.
+2. Declare run and artifact inputs in Markdown frontmatter.
+3. Build executable Python, math, tables, findings, figures, and validated cross-report links.
+4. Publish the rendered site and captured evidence to the selected repository.
+5. Open the current report, inspect a pinned prior version, or export each report as a standalone HTML file.
+
+The showcase publishes the overview twice. `showcase.json` records both responses so the first build remains directly addressable. Source Markdown, consumed files, evidence, and manifests travel with each publication.
+
+::: {.warning}
+**Scope of this demonstration**
+
+This is a deterministic feature tour, not a throughput benchmark or fault-injection test. Specialized notebook integrations and distributed cluster launchers are separate examples. Graphviz diagrams require Graphviz to be installed. No claim of complete Folio or Quarto compatibility is made.
+:::
+
+[Return to findings](@OVERVIEW_URL@).
+
+## Execution and inspection
+
+Cells share a fresh report kernel. This cell demonstrates displayed structured output:
+
+```{python}
+#| label: result-check
+from IPython.display import JSON, display
+display(JSON({"samples": len(samples), "weight": weights["weight"], "synthetic": True}))
+print("Dataset and model loaded from declared evidence.")
+```
+
+An illustrative cell can remain visible without executing:
+
+```{python}
+#| eval: false
+raise RuntimeError("This deliberately disabled example must never run")
+```
+
+An execution-only cell writes a generated result file:
+
+```{python}
+#| include: false
+Path("verification.json").write_text(json.dumps({"checked": True, "samples": len(samples)}))
+```
+
+{{< include includes/reading.md >}}
+
+The manifest supports inspection of source, inputs and execution outputs.[^provenance]
+
+[^provenance]: Recorded dependencies support reproducibility; they do not automatically capture arbitrary external services or operating-system libraries.
+
+
+## Additional card views
+
+```{card}
+type: scatter
+title: Loss against the fitted weight
+inputs: [fit]
+metric: loss
+x: weight
+```
+
+```{card}
+type: histogram
+title: Distribution of loss observations
+inputs: [fit]
+metric: loss
+bins: 12
+```
+
+```{card}
+type: table
+title: Recorded final weight
+inputs: [fit]
+metric: summary.final_weight
+```

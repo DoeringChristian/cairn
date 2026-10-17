@@ -13,9 +13,9 @@ from fastapi.testclient import TestClient
 import cairn
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
-from cairn.server.custom_viewers import builtin_defaults, builtin_viewers
-from cairn.server.viewer_defaults import default_for_subject, normalize_kind, resolve
-from cairn.server.run_sets import run_sets_yaml
+from cairn.backend.custom_viewers import builtin_defaults, builtin_viewers
+from cairn.backend.viewer_defaults import default_for_subject, normalize_kind, resolve
+from cairn.backend.run_sets import run_sets_yaml
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 
@@ -72,7 +72,7 @@ def test_builtin_volume_viewer_ships_and_is_listed(tmp_path):
     assert vol.manifest["accepts"] == ["volume"] and vol.manifest["webgl"] is True
     assert builtin_defaults() == {"volume": "cairn.volume"}
     repo = tmp_path / ".cairn"
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         listed = client.get("/api/projects/fresh/viewers").json()["viewers"]
         (entry,) = [v for v in listed if v["builtin"]]
         assert entry["name"] == "cairn.volume" and entry["dev"] is False and entry["content_digest"] == vol.digest
@@ -100,7 +100,7 @@ def test_first_published_viewer_of_a_custom_kind_becomes_its_default(tmp_path):
     repo = tmp_path / ".cairn"
     cairn.publish_viewer(viewer(tmp_path / "a", "a", ["custom:k/*", "volume"]), project="p", repo=repo)
     cairn.publish_viewer(viewer(tmp_path / "b", "b", ["custom:k/x", "custom:other"]), project="p", repo=repo)
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         # `a` is first for k/*; `b`'s k/x falls under it, `other` is new. Volume
         # (a built-in type) never changes implicitly.
         assert defaults(client)["defaults"] == {"custom:k/*": "a", "custom:other": "b"}
@@ -117,7 +117,7 @@ def test_default_for_declares_and_republishes_only_on_change(tmp_path):
     assert v1.version == 1
     with pytest.raises(ValueError, match="cannot be the default"):
         cairn.publish_viewer(root, project="p", repo=repo, default_for=["image"])
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         assert defaults(client)["defaults"] == {"volume": "ray"}
 
 
@@ -132,7 +132,7 @@ def test_run_use_viewer_and_cli_default_for(tmp_path):
         "--repo", str(repo), "--default-for", "k",
     ])
     assert r.exit_code == 0, r.output
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         assert defaults(client)["defaults"] == {"image": "a", "custom:k": "b"}
 
 
@@ -145,8 +145,8 @@ def test_put_sets_and_clears_defaults(tmp_path):
     cairn.publish_viewer(viewer(tmp_path / "a", "a", ["custom:k", "volume", "image"]), project="p", repo=repo)
     app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
     with TestClient(app) as client:
-        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
-        _rid, read = auth_core.create_token(app.state.db, name="r", role="read")
+        token = app.state.token
+        read = "invalid-token"
         client.headers.update({"Authorization": f"Bearer {token}"})
         put = lambda body: client.put("/api/projects/p/viewer-defaults", json=body)  # noqa: E731
         assert put({"kind": "volume", "viewer": "a"}).json()["defaults"] == {"custom:k": "a", "volume": "a"}
@@ -156,47 +156,11 @@ def test_put_sets_and_clears_defaults(tmp_path):
         assert put({"kind": "image", "viewer": "nope"}).status_code == 404
         assert put({"kind": "Bad Kind", "viewer": "a"}).status_code == 400
         reader = TestClient(app)
-        reader.headers.update({"Authorization": f"Bearer {read}"})
+        reader.headers.update({"Authorization": f"Bearer {token}"})
         assert reader.get("/api/projects/p/viewer-defaults").status_code == 200
-        assert reader.put("/api/projects/p/viewer-defaults", json={"kind": "image", "viewer": "a"}).status_code == 403
+        assert reader.put("/api/projects/p/viewer-defaults", json={"kind": "image", "viewer": "a"}, headers={"Authorization": "Bearer invalid"}).status_code == 401
 
 
 # ---------------------------------------------------------------------------
 # Share scope
 # ---------------------------------------------------------------------------
-
-def test_share_scope_has_the_default_viewers_of_its_kinds(tmp_path):
-    repo = tmp_path / ".cairn"
-    vol = cairn.publish_viewer(viewer(tmp_path / "vol", "vol", ["volume"]), project="p", repo=repo)
-    img = cairn.publish_viewer(viewer(tmp_path / "img", "img", ["image"]), project="p", repo=repo, default_for=["image"])
-    with cairn.Run(project="p", repo=repo, **QUIET) as run:
-        run.track(1.0, "x", 0)
-
-    app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
-    with TestClient(app) as owner:
-        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
-        owner.headers.update({"Authorization": f"Bearer {token}"})
-
-        def share(cards: str) -> TestClient:
-            source = f"```cairn\n{run_sets_yaml([run.id])}\ncards:\n{cards}```"
-            rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
-            secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
-            c = TestClient(app)
-            assert c.post("/api/share/redeem", json={"secret": secret}).status_code == 200
-            return c
-
-        def published(c: TestClient) -> set[str]:
-            return {v["version_id"] for v in c.get("/api/projects/p/viewers").json()["viewers"] if not v.get("builtin")}
-
-        c = share("  - {metric: a, type: image}\n  - {metric: b, type: volume}\n")
-        # image's default is `img`; volume's is the built-in viewer (a published
-        # viewer accepting volume does not take it over).
-        assert published(c) == {img.id}
-        assert vol.id not in published(c)
-        assert c.get("/api/projects/p/viewer-defaults").status_code == 200
-        builtin = [v for v in c.get("/api/projects/p/viewers").json()["viewers"] if v.get("builtin")]
-        assert [v["name"] for v in builtin] == ["cairn.volume"]
-        assert c.get("/api/viewers/builtin/cairn.volume/file", params={"path": "index.js"}).status_code == 200
-
-        owner.put("/api/projects/p/viewer-defaults", json={"kind": "volume", "viewer": "vol"})
-        assert published(share("  - {metric: b, type: volume}\n")) == {vol.id}

@@ -25,18 +25,22 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import artifact_registry_ops as ops
+from cairn.backend import artifact_registry_ops as ops
 from .. import auth
-from ..storage.db import Database
-from ._common import get_blobs, get_db, slugify
-from ..viewer_manifest import VIEWER_TYPE, mime_for
+from cairn.backend.storage.db import Database
+from cairn.server.routes._common import get_blobs, get_db
+from cairn.backend.common import slugify
+from cairn.backend.viewer_manifest import VIEWER_TYPE, mime_for
 from .artifacts import serve_blob
 
 router = APIRouter(prefix="/api", tags=["artifact-registry"])
-_write = Depends(auth.require_role("write"))
+_write = Depends(auth.require_auth)
 
 
 def _http(exc: Exception) -> HTTPException:
+    from cairn.backend.revisions import RevisionConflict
+    if isinstance(exc, RevisionConflict):
+        return HTTPException(status_code=409,detail=str(exc))
     if isinstance(exc, LookupError):
         return HTTPException(status_code=404, detail=str(exc).strip("'\""))
     return HTTPException(status_code=400, detail=str(exc))
@@ -174,6 +178,7 @@ def get_version(version_id: str, request: Request) -> dict[str, Any]:
 
 
 class VersionUpdate(BaseModel):
+    expected_revision: int
     #: Replaces the description when given.
     description: str | None = None
     #: Merged key by key into the metadata when given.
@@ -185,7 +190,8 @@ def update_version(version_id: str, body: VersionUpdate, request: Request) -> di
     """Edit a version's description / merge into its metadata -> the version."""
     try:
         return ops.update_version(
-            get_db(request), version_id, description=body.description, metadata=body.metadata,
+            get_db(request), version_id, expected_revision=body.expected_revision,
+            description=body.description, metadata=body.metadata,
         )
     except (LookupError, ValueError) as exc:
         raise _http(exc) from None

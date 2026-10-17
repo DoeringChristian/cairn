@@ -65,45 +65,23 @@ def test_creating_a_view_stores_the_default_first(client):
     assert body["current"] == default_view_id(pid)
 
 
-def test_migrated_workspace_is_the_default_view(tmp_path):
-    """An existing project workspace (and its saved views) come up as views."""
+def test_legacy_project_workspace_is_preserved_and_requires_conversion(tmp_path):
+    """Old workspace layouts are refused instead of silently rewritten/dropped."""
     import sqlite3
-
-    from cairn.server.storage.migrations import apply_migrations
-
-    app = create_app(data_dir=tmp_path / "cairn", mount_ui=False)
-    with TestClient(app) as c:
-        pid = _make_project(c)
-    db_path = tmp_path / "cairn" / "cairn.db"
-    con = sqlite3.connect(db_path)
-    # Rewind the table to its old shape: one workspace, one saved view.
-    con.execute("DROP TABLE project_docs")
-    con.execute("DROP TABLE project_view_state")
-    con.execute(
-        """CREATE TABLE project_docs (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-            kind TEXT NOT NULL CHECK(kind IN ('workspace','comparison','view')),
-            name TEXT NOT NULL DEFAULT '', rev INTEGER NOT NULL,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)"""
-    )
-    con.execute("INSERT INTO project_docs VALUES ('w', ?, 'workspace', '', 5, '2025-02', '2025-02', '{\"x\": 1}')", [pid])
-    con.execute("INSERT INTO project_docs VALUES ('s', ?, 'view', 'Saved', 2, '2025-03', '2025-03', '{\"layout\": {\"y\": 2}}')", [pid])
-    apply_migrations(con)
-    con.close()
-
-    app = create_app(data_dir=tmp_path / "cairn", mount_ui=False)
-    with TestClient(app) as c:
-        body = _views(c, pid)
-        assert body["current"] == "w"
-        assert [(v["id"], v["name"], v["rev"], v["payload"]) for v in body["views"]] == [
-            ("w", "Default", 5, {"x": 1}),
-            ("s", "Saved", 2, {"y": 2}),
-        ]
-        r = c.put(f"/api/projects/{pid}/views/w", json={"base_rev": 5, "payload": {"x": 2}})
-        assert r.status_code == 200 and r.json()["rev"] == 6
-
-
-# ── CRUD + revs ────────────────────────────────────────────────────────────
+    from cairn.backend.storage.migrations import UnsupportedSchema, apply_migrations
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as con:
+        apply_migrations(con)
+        con.execute("DROP TABLE project_docs")
+        con.execute("""CREATE TABLE project_docs (
+            id TEXT PRIMARY KEY, kind TEXT CHECK(kind IN ('workspace','comparison','view')),
+            payload TEXT)""")
+        con.execute("INSERT INTO project_docs VALUES ('w','workspace','{\"x\":1}')")
+        con.commit()
+        before = list(con.iterdump())
+        with pytest.raises(UnsupportedSchema, match='project_docs'):
+            apply_migrations(con)
+        assert list(con.iterdump()) == before
 
 
 def test_views_crud_in_creation_order(client):
@@ -206,27 +184,25 @@ def test_deleting_the_current_view_makes_the_first_remaining_current(client):
 def auth_env(tmp_path):
     app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True)
     with TestClient(app) as c:
-        tokens = {}
-        for role in ("write", "read"):
-            _id, plain = auth_core.create_token(app.state.db, name=f"{role}-t", role=role)
-            tokens[role] = {"Authorization": f"Bearer {plain}"}
+        tokens = {"write": {"Authorization": f"Bearer {app.state.token}"},
+                  "read": {"Authorization": "Bearer invalid"}}
         yield c, tokens
 
 
-def test_reads_need_read_and_writes_need_write(auth_env):
+def test_reads_and_writes_need_server_token(auth_env):
     c, tokens = auth_env
     pid = c.post("/api/runs", json={"project": "p"}, headers=tokens["write"]).json()["project_id"]
     did = default_view_id(pid)
     assert c.get(f"/api/projects/{pid}/views").status_code == 401
-    assert c.get(f"/api/projects/{pid}/views", headers=tokens["read"]).status_code == 200
-    assert c.get(f"/api/projects/{pid}/current-view", headers=tokens["read"]).status_code == 200
+    assert c.get(f"/api/projects/{pid}/views", headers=tokens["write"]).status_code == 200
+    assert c.get(f"/api/projects/{pid}/current-view", headers=tokens["write"]).status_code == 200
 
     body = {"base_rev": 0, "payload": {}}
-    assert c.put(f"/api/projects/{pid}/views/{did}", json=body, headers=tokens["read"]).status_code == 403
+    assert c.put(f"/api/projects/{pid}/views/{did}", json=body, headers=tokens["read"]).status_code == 401
     assert c.post(f"/api/projects/{pid}/views", json={"name": "v", "payload": {}},
-                  headers=tokens["read"]).status_code == 403
+                  headers=tokens["read"]).status_code == 401
     assert c.put(f"/api/projects/{pid}/current-view", json={"view_id": did},
-                 headers=tokens["read"]).status_code == 403
+                 headers=tokens["read"]).status_code == 401
     assert c.put(f"/api/projects/{pid}/views/{did}", json=body, headers=tokens["write"]).status_code == 200
 
 

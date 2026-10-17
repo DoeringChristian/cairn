@@ -1,386 +1,237 @@
 # Cairn
 
-An open-source ML experiment tracker. Two ways to use it:
+Cairn records experiments and turns their evidence into executable Markdown reports.
+Reports are the main project interface; runs, metrics, media, and versioned artifacts
+remain available for investigation.
 
-**Local repo** (default): log to `./.cairn/`. Nothing to set up: the repo's server starts on its own in the background, on this machine.
+This repository continues the **cairn-track** implementation with one backend for
+local and remote use, immutable report publications, and an integrated notebook
+editor. The Python distribution remains `cairn-track`; import it as `cairn`.
 
-**Server** (cross-device): run `cairn server` on one machine, point SDK clients at it via `repo="cairn://host:port"`.
+## One destination
 
-Either way a run writes only its own run directory, `./.cairn/runs/<id>/` (a checksummed record log, synced every 100 ms), and a background uploader sends it to the server exactly once, keeps going after the training process is killed, and retries while the server is down. `cairn sync` uploads run directories later, from any machine. The server is the only writer of the database. A repo created locally can later be served without any migration.
+Choose a local repository **or** a remote tracking server:
 
-**Documentation:** the full guide lives in [`docs/`](docs/index.md) — start with
-[Getting started](docs/getting-started.md), then the [guides](docs/guides/index.md),
-the [web UI](docs/ui/index.md) and the [reference](docs/reference/index.md) (Python
-API, CLI, expression language). It is a MkDocs site, published to GitHub Pages;
-preview it locally with `uv run --extra docs mkdocs serve`.
+```python
+import cairn
+
+# Direct SQLite + files. No tracking server or uploader process starts.
+run = cairn.Run("study", repo="./.cairn", name="baseline")
+
+# Or: HTTP to a remote server. No local tracking database is created.
+run = cairn.Run("study", repo="https://cairn.example.org", name="baseline")
+```
+
+Local processes open the same SQLite database in WAL mode. Each run keeps a durable
+journal in that repo and applies batches directly to the database. SQLite transactions
+serialize concurrent writers. Reader, edits, sweeps, and artifact operations also use
+the direct backend. A Reader recovers unapplied local journal records after a crash.
+
+Remote runs write a durable upload buffer and send bounded batches to their server.
+The detached uploader survives the training process, retries outages, and acknowledges
+records only after the server commits them. Repeated delivery does not insert duplicate
+records. `cairn sync` retries buffered runs explicitly. The buffer is not a second repo:
+it has no tracking database or server-state reconciliation.
+
+Local run journals live at `<repo>/runs/<id>/`; remote buffers use
+`$CAIRN_DIR/runs/<id>/` (default `./.cairn/runs/<id>/`). Records reach the OS before
+logging returns; fsync and database application are grouped, normally every 100 ms.
+Finishing a local run flushes and commits its records. Sudden power loss can lose the
+last unflushed interval. Use a local disk for SQLite; cluster jobs should target a server.
+
+Select the destination explicitly with `repo=`, or through `cairn.configure(repo=...)`,
+`CAIRN_REPO`, or the client config file. There is no automatic local/remote fallback.
 
 ## Install
 
-cairn is not on PyPI; install it from this repository (Python 3.10+):
+Install the release with report support:
 
 ```bash
-# tracking, the CLI and the HTTP API
-pip install "cairn-track @ git+https://github.com/DoeringChristian/cairn"
-# ...plus the browser viewer
-pip install "cairn-track[ui] @ git+https://github.com/DoeringChristian/cairn"
+pip install 'cairn-track[reports,ui] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'
 ```
 
-The base install carries no browser assets and needs no Node — which is the
-point on a compute node that will only ever log metrics. `cairn ui` and
-`cairn server --ui` need the `ui` extra and say so if it is missing.
-
-Optional extras:
-
-- `cairn-track[ui]` — the browser viewer (`cairn ui`, `cairn server --ui`) and `cairn.ui` notebook card embeds
-- `cairn-track[media]` — matplotlib, plotly, kaleido, imageio, soundfile for richer media handlers
-- `cairn-track[export]` — pandas + pyarrow for `cairn export --project`, Parquet and `RunQuery.history()`
-- `cairn-track[sweep]` — Optuna, for `method: bayes` sweeps (grid and random need nothing)
-- `cairn-track[huggingface]` / `[lightning]` / `[keras]` / `[xgboost]` / `[ultralytics]` — framework callbacks in `cairn.integrations`
-- `cairn-track[tb]` — `cairn import-tb` for TensorBoard event files
-- `cairn-track[discovery]` — zeroconf/mDNS server discovery on the LAN
-- `cairn-track[docs]` — MkDocs, to build the documentation site
-
-Combine extras as usual: `"cairn-track[ui,media,export] @ git+https://github.com/DoeringChristian/cairn"`.
-
-## Quick start — local mode
+From a source checkout:
 
 ```bash
-cairn init                    # creates ./.cairn/
+uv pip install -e '.[reports,ui]'
 ```
+
+`reports` installs the Markdown, mathematics, Matplotlib, and Plotly rendering tools.
+`ui` adds the Python notebook-card package. Release wheels also include the matching
+browser bundle. To rebuild that bundle from this checkout:
+
+```bash
+cd vendor/cairn-ui
+npm ci
+npm run build
+```
+
+## Record an experiment
 
 ```python
 import cairn
 
-run = cairn.Run(
-    project="image-classification",
-    name="baseline-cnn",
-    repo="./.cairn",          # or: export CAIRN_REPO=./.cairn
-)
-run.config({"hparams": {"lr": 3e-4, "batch_size": 32}})
-for step, loss in training_loop():
-    run.track(loss, name="loss", step=step)
+run = cairn.init(project="study", name="baseline", config={"lr": 0.1})
+cairn.define_metric("loss", summary="min")
+for loss in [1.0, 0.6, 0.3]:
+    cairn.log({"loss": loss})
+run.summary["conclusion"] = "converged"
+cairn.finish()
+
+print(run.id)
 ```
 
-Browse results:
+`cairn.init()` defaults the project to `CAIRN_PROJECT` or the current directory's
+name. It returns the same run exposed as `cairn.run`. Calling `init()` with an active
+default run raises; finish it first. Logging before initialization also raises.
+`cairn.finish()` is harmless if there is no active run.
 
-```bash
-cairn ui                      # serves and opens http://localhost:4301/
-cairn ui --no-open-browser    # serve without opening a browser tab
-```
-
-Authentication is on by default: at startup `cairn ui` prints the repo's
-reusable access token and a one-time browser login link (`cairn ui` opens it
-for you). `cairn token create|list|revoke` manages further tokens; `--no-auth`
-turns authentication off for local debugging. `cairn login URL` saves a token
-for the SDK and CLI. Logins are per server, in the browser and in the config
-file, so you can be logged into several servers on one host at once.
-
-## Concurrent / distributed training
-
-For Slurm clusters, Ray, Dask, or any setup with many concurrent runs, run `cairn server` on a machine with a local disk the jobs can reach (the server refuses a repo on NFS), and log to it over HTTP:
+All operations also work on the run itself:
 
 ```python
-import cairn
-
-run = cairn.Run(
-    project="sweep",
-    name="lr-search",
-    repo="cairn://login-node:4300",   # each run writes its own run directory and uploads it
-)
+with cairn.init(project="study", config={"lr": 0.1}) as run:
+    run.config.update({"epochs": 10})
+    run.log({"loss": 0.3, "accuracy": 0.9})
+    run.summary["best_accuracy"] = 0.9
 ```
 
-Each run writes `./.cairn/runs/<run_id>/` (`CAIRN_DIR`, e.g. node-local scratch) and the uploader on its node sends it; nothing on the training path waits for the network. On one machine, a local repo works the same way. See [Run directories, syncing and backup](docs/guides/run-directories.md) and `examples/` for integration with ProcessPoolExecutor, submitit, Ray Tune, Dask, Fabric, and Kubernetes.
-
-## Server mode — cross-device logging
-
-On the machine that will hold the data:
-
-```bash
-cairn server                  # ingest API only; defaults to ./.cairn
-cairn server --ui             # optionally add the paired UI on port 4301
-```
-
-From any training machine, use the `cairn://` URL scheme:
+Each `log` call appends one complete entry. `step` is an optional field, not a
+uniqueness constraint: repeated and decreasing steps are retained. Without a step,
+plots use observation order. Nested JSON, strings, booleans, arrays, and typed
+media remain queryable without flattening the original entry.
 
 ```python
-import cairn
-
-run = cairn.Run(
-    project="image-classification",
-    name="baseline-cnn",
-    repo="cairn://192.168.1.42:4300",
-)
-run.config({"hparams": {"lr": 3e-4, "batch_size": 32}})
-run.track(0.5, name="loss", step=0)
+cairn.log({"loss": 0.3, "step": 12, "validation": {"split": "test"}})
+cairn.log({"loss": 0.2})
+cairn.track(cairn.Image(image), {"split": "validation", "epoch": 4})
 ```
 
-To render with the browser and GPU on your workstation while the data stays on
-that server, run a local same-origin UI proxy:
+`track(value, metadata)` stores the value under `value` and preserves metadata as
+ordinary fields. Named component logging with `run.track(value, name, step)` is
+also available. `commit=False` explicitly accumulates fields until the next
+committed call or `finish()`; these uncommitted fields stay in memory.
+
+The run's **Records** tab browses entries, filters arbitrary fields, and plots any
+numeric x/y pair. Python provides `run.records(where={"validation.split": "test"})`
+and `run.record_series("loss", x="step")` on a Reader run. JSON Pointer paths such
+as `/validation/split` avoid ambiguity for keys containing dots or slashes.
+
+`cairn.log_artifact(...)`, `cairn.use_artifact(...)`, and `cairn.define_metric(...)`
+use the default run. Artifact publication with an explicit `project=` still works
+without a run. Independent `cairn.Run(...)` objects do not change the default run;
+use `capture_stdout=False` on additional simultaneous runs.
+
+This follows W&B's common workflow, not its entire API. Cairn retains its media
+wrappers, exact-name metric rules, and local/remote destination model. Config updates
+retain Cairn's deep merge behavior. Config and summary support `.update(...)`,
+`[key] = value`, and the existing callable syntax; nested reads return copies, so
+write nested changes back explicitly. Summary contains explicit results; automatic
+metric aggregates are available through `Reader.Run.final`. Read results with
+`cairn.Reader(repo)`.
+
+## Write a report
 
 ```bash
-# Uses the server's token server-side (from `cairn login` or CAIRN_TOKEN):
-cairn login cairn://192.168.1.42:4300
-cairn ui --repo cairn://192.168.1.42:4300
-
-# Without a saved token, paste the remote token into the local browser login.
+cairn report new fit --run FULL_RUN_ID
 ```
 
-Open `http://localhost:4301`. The JavaScript is served from loopback (a browser
-secure context), while `/api/*`, artifacts, uploads, and range requests stream
-through to the remote server. The token is never placed in a URL or browser
-configuration.
+Edit `reports/fit/report.md`:
 
-Or set the training destination globally:
+````markdown
+---
+title: Fit quality
+inputs:
+  fit: "run:FULL_RUN_ID"
+---
 
-```python
-cairn.configure(repo="cairn://gpu-server:4300")
+```python exec hide
+loss = read_scalars(inputs.fit)["loss"]
 ```
 
-Or via environment variable:
+The final loss is {{ loss }}.
+````
+
+Reports support executable Python fences, figures, Plotly, tables, mathematics,
+callouts, inline expressions, and checked `report:<slug>` links. Python can execute
+on the author's machine or on the selected server. Choose **New report** in the UI
+to start writing immediately; Markdown and Python cells autosave to a draft.
+**Publish** builds a new immutable version. The Read/Edit toggle saves the draft
+without publishing it.
+
+Inputs are finished runs (`run:<full-id>`) or existing tracker artifact versions
+(`artifact:<project>/<name>:vN`; aliases resolve at build time). Each build captures
+input files and records their content digest in its manifest. Publication stores the
+rendered site and the selected report's captured evidence as an immutable artifact
+version. Later run edits or alias changes do not modify that publication.
 
 ```bash
-export CAIRN_REPO=cairn://gpu-server:4300
-python train.py
+cairn build                           # build all reports
+cairn serve                           # build and preview on localhost:8000
+cairn report publish fit --project study
+cairn ui                              # explicitly start the reports UI
+cairn report export fit --out fit.html
 ```
 
-## Resolution order
+A complete example is in [examples/reports-first](examples/reports-first/README.md).
+Reports use Markdown/QMD source and capture their cards, sources and evidence.
 
-The SDK picks a destination in this order:
-
-1. Explicit `repo=` kwarg
-2. `cairn.configure(repo=...)`, then `cairn.configure(server=...)`
-3. `CAIRN_REPO`, then `CAIRN_SERVER` env var
-4. The TOML config file's `repo`, then `server` key (in the platform config
-   dir, e.g. `~/.config/cairn/config.toml` on Linux; `cairn configure` writes it)
-5. `./.cairn/` in the current working directory
-
-The `repo=` parameter accepts:
-- A filesystem path: `/path/to/.cairn` or `./.cairn` → a local repo
-- A URL: `cairn://host:port` → a server
-
-A local repo is served by one server on this machine: the running `cairn server`
-or `cairn ui`, else one started in the background (authenticated by the repo's
-`auth/local.token`).
-
-## Disabled mode
-
-`mode="disabled"` turns every `Run` method into a no-op: no repo, no server,
-no threads. Set it with `cairn.Run(mode="disabled")`, `cairn.configure(mode="disabled")`,
-`CAIRN_MODE=disabled`, or `mode = "disabled"` in the config file (in that
-priority order). The default is `"enabled"`.
-
-## Final metric values
-
-Each metric has one final value per run — what the runs table, the run
-overview, the Summary cards, `Reader` runs' `.final`, and the metric filters
-(`metrics__<name>` in `RunQuery.filter`, `metrics.<name>` in query URLs) show.
-It is, in order: an explicit `run.summary(name=...)` key; else the metric's rule, set
-with `run.track(value, name, step, summary="min"|"max"|"mean"|"last")`; else
-the last logged point. Rules are applied when values are read, so they never
-change logged data. A `"min"` rule also makes lower values count as better
-(best green, worst red in the Scalars card and the run comparer). A project can
-override a metric's summary and goal from a metric column's header menu in the
-UI (`Reader.metric_rules(project)` reads the effective rules).
-
-`x=` names another scalar series (its full name, never scope-prefixed) that
-charts of the metric start on as their x-axis, joined on step:
-
-```python
-run.track(val_loss, "val.loss", step, summary="min", x="epoch")  # report best, plot vs epoch
-run.track(val_acc, "val.acc", step, summary="max", x="epoch")
-```
-
-Both keywords are for scalar metrics only and match that exact name (inside a
-component's `__cairn_track__`, `scope.track(v, "loss", summary="min")` rules
-the prefixed name, e.g. `model.loss`). A rule is sent only when it changes, so
-passing it on every call is free; a keyword you pass replaces that part of
-the rule, and one you leave out keeps its earlier value. See `examples/demo_metric_rules.py`.
-
-## Organising runs
-
-As in wandb, a run has a free `name`, a `group` (runs that belong together:
-seeds, folds, the steps of one experiment) and a `job_type` (its role:
-`train`, `eval`, ...). The server numbers re-runs with the same group, job
-type and name (`run.version`: v1, v2, ...); unique names never get a v2, and
-**Latest only** in the UI keeps the newest of each. The runs table and the
-project workspace group by group, then job type, with one aggregated chart line
-per innermost group; clicking a group filters the workspace to it.
-
-```python
-train = cairn.Run("mnist", group="exp-44", job_type="train", name="train")
-...
-ev = cairn.Run("mnist", group="exp-44", job_type="eval", name="eval", uses=[train])
-```
-
-## Run IDs
-
-Run IDs are 128-bit hex strings (32 characters), generated client-side. The UI shows the first 6 characters (git-style short hash) with click-to-copy for the full ID. Existing shorter IDs from earlier versions remain valid.
-
-## Reading data back
-
-```python
-import cairn
-
-reader = cairn.Reader(repo="./.cairn")
-# or: cairn.Reader(repo="cairn://localhost:4300")
-
-for run in reader.runs(project="sweep").filter(status="completed", metrics__loss__lt=0.1):
-    print(run.name, run.final["loss"], run.config["hparams"]["lr"])
-
-reader.runs("sweep").where("last(val.acc) > 0.9 and config.opt == 'adam'").list()
-```
-
-`RunQuery.history()` returns every scalar point as a pandas DataFrame, and
-`run.edit()` changes a finished run's config, summary, tags, name or notes.
-
-## Command line
-
-Every command that reads or changes data works on a local repo (through its
-server, started when needed) and on a server alike, and finds its target like `cairn.Run`:
-`--repo PATH|URL` or `--server URL`, else `CAIRN_REPO`/`CAIRN_SERVER`, the
-config file, `./.cairn`.
+## Serve remotely
 
 ```bash
-cairn list --project sweep -c config.lr -c metrics.loss   # runs, as the UI's table selects them
-cairn ping                                # a server's health, or a local repo's state
-cairn open RUN_ID                         # the run's page in the viewer
-cairn archive RUN_ID ...                  # rm, archive, unarchive
-cairn export RUN_ID -o run.csv --format csv
-cairn export-runs RUN_ID ... -o runs.zip  # whole runs; cairn import-runs runs.zip
-cairn artifact versions sweep/model       # ls, versions, get, alias, tag, rm, lineage
-cairn report ls                           # ls, show, export, rm, share, shares, unshare
-cairn diff RUN_ID                         # the working directory vs. a run's source snapshot
-cairn viewer ls --project P               # custom viewers: init, add, dev, publish, ls
-cairn sync [--clean]                      # upload run directories now; --clean deletes confirmed ones
-cairn backup                              # online copy of the database in <repo>/backups/
-cairn fsck                                # check the database, blobs and run directories
-cairn configure --server URL              # save the default server (or --repo) to the config file
+CAIRN_TOKEN=your-secret cairn server --repo /srv/cairn --host 0.0.0.0
 ```
 
-## More
-
-- **Sweeps** — `cairn sweep create sweep.yaml` + `cairn agent <id>` on any number
-  of machines, or `cairn.sweep(space, ...).run(train)` in process.
-- **Artifacts** — `run.log_artifact(value_or_path, name, type="model", aliases=["best"])`
-  logs a new version (`cairn.Artifact` builds multi-file ones: directories, references,
-  generated files); `run.use_artifact("model:best")` (or `"other-project/model:best"`)
-  records lineage and returns the version (`.get()`, `.download()`);
-  `run.use_run(other)` / `cairn.Run(..., uses=[...])` links runs directly.
-- **Integrations** — `cairn.integrations.{huggingface,lightning,keras,xgboost,ultralytics}`.
-- **Import/export** — `cairn import-tb LOGDIR`, `cairn export RUN_ID` or
-  `cairn export --project P --format csv|parquet`, run archives with
-  `cairn export-runs` / `cairn import-runs`.
-- **Run lifecycle** — `resume=`, `fork_from=(id, step)`, stop from the UI
-  (`run.should_stop`), `run.alert(...)` with `cairn server --alert-webhook`.
-- **Web UI** — a runs table, a project workspace (runs sidebar + cards, grouped
-  lines, parallel coordinates, parameter importance), run pages (Workspace,
-  Overview with Inputs / Used by, System, Logs, Files, Artifacts), an artifact
-  explorer, a lineage graph, and reports whose card blocks hold live run sets,
-  with share links.
-- **Notebooks** — a `cairn.Run` or `Reader` run as a cell's last expression
-  shows its run page inline (`run.display(tab=, height=)`);
-  `cairn.ui.workspace(project, filter=)` and `cairn.ui.report(project, id)`
-  embed the workspace and reports (Jupyter and marimo).
-
-## Live query URLs
-
-A **live query URL** is a stable server URL that always resolves to "the
-`<tag>` artifact of the latest (optionally filtered) run". It lets a page or
-notebook show the freshest data *every time it opens* — the HTML never changes,
-only what the URL resolves to does.
-
-```python
-import cairn
-
-# "the train/render image of the most recent run in project 'demo'"
-url = cairn.query_url("train/render", project="demo", server="cairn://localhost:4300")
-
-# Embed it anywhere — the browser fetches it fresh on every open.
-html = f'<img src="{url}">'
-```
-
-Under the hood `GET /api/query?run=latest&project=demo&tag=train/render`
-**302-redirects** to the immutable, content-addressed
-`/api/artifacts/{digest}` endpoint. The query response is `Cache-Control:
-no-store` (re-resolved on every open); the digest it points at is cached
-forever.
-
-Selector grammar (query params):
-
-| Param | Meaning |
-|-------|---------|
-| `run` | `latest` (default) · `latest:N` (N-th newest) · `id:<run_id>` (pin) · `newest-per-name` (per series: group, job type, name) |
-| `project` | restrict to a project id |
-| `name` | display-name glob (`exp*`) or case-insensitive substring |
-| `status` | exact run status (`completed`, …) |
-| `<param>__<op>` | run-param / metric predicate — `lr__gt=1e-4`, `metrics.loss__lt=0.1`, `tags__contains=best` (ops: `gt`/`lt`/`gte`/`lte`/`in`/`contains`/`startswith`/…) |
-| `tag` | **required** — the media sequence name to resolve |
-| `step` | `latest` (default, highest step) or an explicit `<N>` |
-| `at` | ISO-8601 pin — "latest run created ≤ this instant" |
-| `format` | `raw` (default → 302) or `json` (`{run_id, digest, step, mime_type, size, url}`) |
-
-`cairn.query_url(..., live=False)` resolves once now and returns the baked
-immutable digest URL (fully pinned). `reader.runs("demo").filter(lr__gt=1e-4).latest_url("render")`
-and `run["render"].url` are equivalent sugar. Query URLs need a **server** when
-fetched.
-
-## Examples
-
-`examples/` holds about 30 runnable scripts: every media type
-(`demo_image_*`, `demo_mesh.py`, `demo_table.py`, ...), metric rules, sweeps,
-and the distributed setups below. See [docs/examples.md](docs/examples.md).
-
-| Example | Framework | Multi-machine? |
-|---------|-----------|---------------|
-| `examples/multi_process.py` | ProcessPoolExecutor | No |
-| `examples/multi_thread.py` | threading.Thread | No |
-| `examples/multiprocessing_pool.py` | multiprocessing.Pool | No |
-| `examples/fabric_remote.py` | Fabric/SSH | Yes |
-| `examples/submitit_sweep.py` | submitit/Slurm | Yes |
-| `examples/ray_tune.py` | Ray Tune | Yes |
-| `examples/dask_sweep.py` | Dask SSHCluster | Yes |
-| `examples/kubernetes_jobs.py` | Kubernetes Jobs | Yes |
-
-## Development
-
-This project uses [uv](https://docs.astral.sh/uv/) for Python and npm for the UI.
-
-The browser viewer ([cairn-ui](https://github.com/DoeringChristian/cairn-ui))
-is vendored as a git submodule under `vendor/`. Clone with submodules:
+Server storage can use PostgreSQL and S3 without changing the client API:
 
 ```bash
-git clone --recurse-submodules https://github.com/DoeringChristian/cairn
-# already cloned? pull the submodules in:
-git submodule update --init --recursive
+pip install 'cairn-track[deployment,reports] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'
+cairn server --repo /srv/cairn --database-url postgresql://user@db/cairn \
+  --blob-root s3://my-bucket/cairn --host 0.0.0.0
 ```
 
-```bash
-uv sync --extra dev
-uv run pytest
-```
+`CAIRN_DATABASE_URL` and `CAIRN_BLOB_ROOT` configure the same options. S3 uses
+standard AWS credentials; `CAIRN_S3_ENDPOINT_URL` selects a compatible endpoint.
+The server keeps a checksum-verified local blob cache and report build workspace.
+PostgreSQL uses pooled connections and transaction-scoped resource locks.
+Back up PostgreSQL with your provider or `pg_dump`; its page integrity checks
+belong to `pg_amcheck`. Cairn's `fsck` still checks referenced blobs. Automatic
+age-based S3 garbage collection retains objects, because a concurrent upload
+cannot safely be protected by a HEAD-then-DELETE sequence; explicit deletion
+remains available. Filesystem blob garbage collection is unchanged.
 
-`uv sync --extra dev` installs the viewer editable from `vendor/cairn-ui`, so a
-dev checkout behaves like a full install. The viewer is developed in its own
-repository ([cairn-ui](https://github.com/DoeringChristian/cairn-ui)); this one
-vendors it as a submodule, so building the browser bundle happens there.
+Authentication is enabled by default, including Python `create_app()`. If
+`CAIRN_TOKEN` is unset, the server atomically creates a private `<repo>/token` file
+and prints its path. Use `--token-file PATH` or `CAIRN_TOKEN_FILE` to choose another
+file. Existing credentials persist across restarts; generated files have mode 0600.
+Clients automatically read a copied token from `.cairn/token` in their project or
+`~/.config/cairn/token`, without environment variables. `CAIRN_TOKEN_FILE` remains
+an explicit override. Authenticated servers print browser login links at startup.
 
-Building against a bundle somewhere else — another checkout, a `vite build
---watch` output — is what `CAIRN_UI_DIST` is for. It wins outright: if it names
-something unusable, no viewer is served rather than silently falling back to the
-installed one.
+The server uses one token. SDK requests carry it as a bearer header; browser login
+stores that same token in an HttpOnly cookie. There are no roles, token creation
+commands, OTPs, SSH login, or restricted share links. Change the configured token and
+restart the server to revoke the old credential. Local database access needs no token.
 
-For UI development with HMR:
+On clients, set `CAIRN_TOKEN` or run `cairn login https://your-server` to save the
+existing token for that URL. `cairn ui --repo https://your-server` can serve the viewer
+locally while proxying requests to the remote; it creates no tracking repo.
+Use `--no-auth` explicitly for an unauthenticated server.
 
-```bash
-# terminal 1
-uv run cairn ui --repo ./.cairn --no-auth --no-open-browser
+## Breaking changes from 0.6
 
-# terminal 2
-cd vendor/cairn-ui && npm run dev   # http://localhost:5173, proxies /api to :4301
-```
+- Filesystem targets open the database directly, even while a UI is running.
+- No tracking server is spawned automatically; `server --daemon` is removed.
+- Local journals belong to their repository; `CAIRN_DIR` controls remote buffering.
+- One configured server token replaces database-backed credentials and share links.
+- Project landing pages show reports; the runs table is at `/p/<project>/runs`.
+- The CLI centers on reports, runs, artifacts, explicit serving, and buffered delivery.
+  Older CLI administration and sweep commands are removed; the Python sweep API remains.
 
-Docs: `uv sync --extra docs && uv run mkdocs serve` (http://localhost:8000).
+Current development schemas 7–10 upgrade transactionally to schema 11. Unsupported
+older schemas are refused unchanged; there is no automatic import from the previous
+artifact-store implementation, preserved separately as `cairn-report`.
 
-## License
-
-Apache 2.0
+A complete local SQLite/files repository can move to a server without changing its
+storage backend. Stop writers, copy the whole repository, start the server on that
+copy, and point clients at its URL. Run ZIP export is not a complete migration. See
+[Storage architecture and migration](docs/guides/storage-architecture.md).

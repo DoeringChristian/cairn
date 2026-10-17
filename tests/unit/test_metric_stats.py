@@ -19,13 +19,13 @@ from typing import Any
 
 import pytest
 
-from cairn.server import ingest_ops
-from cairn.server.routes.runs import _metric_stats
-from cairn.server.run_archive import restore_archive, write_archive
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.db import Database
-from cairn.server.storage.metric_stats import rebuild_metric_stats
-from cairn.server.metric_rules import resolved_values
+from cairn.backend import ingest_ops
+from cairn.backend.run_reads import _metric_stats
+from cairn.backend.run_archive import restore_archive, write_archive
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.db import Database
+from cairn.backend.storage.metric_stats import rebuild_metric_stats
+from cairn.backend.metric_rules import resolved_values
 
 WALL = "2026-01-01T00:00:00+00:00"
 
@@ -283,7 +283,7 @@ class _DD:
 
 
 def test_archive_restore_builds_stats(tmp_path):
-    from cairn.server.storage.datadir import DataDir
+    from cairn.backend.storage.datadir import DataDir
 
     rng = random.Random(99)
     src = DataDir(tmp_path / "src")
@@ -306,8 +306,8 @@ def test_archive_restore_builds_stats(tmp_path):
     db.close()
 
 
-def test_backfill_on_open(tmp_path):
-    """A repo whose points predate the index gets it built on open."""
+def test_explicit_backfill(tmp_path):
+    """Maintenance rebuilds the index; ordinary opens avoid a full history scan."""
     rng = random.Random(7)
     path = tmp_path / "cairn.db"
     db = Database.open(path)
@@ -319,6 +319,9 @@ def test_backfill_on_open(tmp_path):
     db.close()
 
     db = Database.open(path)
+    assert db.read_one("SELECT COUNT(*) FROM metric_stats")[0] == 0
+    from cairn.backend.storage.metric_stats import backfill_metric_stats
+    backfill_metric_stats(db._conn)
     (n,) = db.read_one("SELECT COUNT(DISTINCT run_id) FROM metric_stats")
     assert n == 3
     _check(db)
@@ -373,7 +376,7 @@ def test_monotonic_flag(fresh_db):
     assert flag("t") == 1
 
     db.write("UPDATE metric_stats SET monotonic = NULL")
-    from cairn.server.storage.migrations import apply_migrations
+    from cairn.backend.storage.metric_stats import fill_monotonic
     with db.transaction() as con:
-        apply_migrations(con)
+        fill_monotonic(con)
     assert (flag("epoch"), flag("lr"), flag("t")) == (0, 0, 1)

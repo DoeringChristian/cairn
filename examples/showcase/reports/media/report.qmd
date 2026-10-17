@@ -1,0 +1,90 @@
+---
+title: Media atlas
+description: Small examples of the system's rich evidence types.
+inputs:
+  evaluation: "run:@EVALUATION@"
+  viewer: "artifact:@VIEWER@"
+---
+
+## Images and generated figures
+
+![Synthetic field](assets/field.png "The same field is logged with a segmentation mask and a detection box.")
+
+![Histogram](assets/histogram.svg "A static SVG generated with matplotlib.")
+
+```{python}
+#| echo: false
+#| label: fig-surface
+#| fig-cap: Rotate, zoom, and inspect the synthetic surface.
+import json
+from pathlib import Path
+from html import escape
+from IPython.display import display, HTML, Markdown, JSON
+
+def read_json(path):
+    return json.loads(Path(path).read_text())
+
+def read_series(folder, key):
+    return [event for line in (folder / "metrics.jsonl").read_text().splitlines()
+            if (event := json.loads(line)).get("name") == key]
+
+def report_html(markup):
+    display(HTML(markup))
+
+def metric(label, value, detail="", fmt=None):
+    shown = format(value, fmt) if fmt else str(value)
+    display(HTML(f'<div class="metric"><span>{escape(label)}</span><strong>{escape(shown)}</strong><small>{escape(detail)}</small></div>'))
+
+import plotly.io as pio
+from IPython.display import display
+display(pio.read_json("assets/surface.plotly.json"))
+```
+
+## Motion and sound
+
+<video controls src="assets/motion.mp4"></video>
+
+Sixteen generated frames, encoded locally as a short MP4.
+
+<audio controls src="assets/tone.wav">A short synthetic tone.</audio>
+
+## The complete logged collection
+
+The run inspector provides the specialized viewers, overlays, galleries, table controls, classification curves, and geometry controls. The report is the reading surface; its declared evaluation input preserves the evidence behind those views.
+
+```{python}
+#| echo: false
+items = read_json(inputs["evaluation"] / "media.json")
+report_html('<table><thead><tr><th>Logged name</th><th>Media type</th></tr></thead><tbody>' + ''.join(f'<tr><td>{escape(item["name"])}</td><td>{escape(item["type"])}</td></tr>' for item in items) + '</tbody></table>')
+metric("Captured media entries", len(items), "See the evaluation run for interactive viewers")
+```
+
+[Open evaluation and media run](/p/@PROJECT@/r/@EVALUATION@). Add cards for the named series to inspect image masks and boxes, galleries, audio/video, table sorting and CSV export, histogram, tensor, confusion matrix, PR/ROC curves, point cloud, mesh, box hierarchy, octree, BVH, and a custom bar viewer. Volumes are stored for download; the built-in viewer does not promise volume rendering.
+
+::: {.finding}
+**Custom data retains its meaning**
+
+The `custom` series contains an array with kind `demo/hist`. A versioned, sandboxed custom viewer turns it into bars and exposes color and normalization settings.
+:::
+
+Return to [the experiment](@OVERVIEW_URL@) or inspect [the methods](@METHODS_URL@).
+
+
+## Captured custom viewer
+
+This is the same custom viewer artifact used by the evaluation run. Its manifest, JavaScript dependencies, SDK runtime, initial settings, and input payload are captured in this report. Changing the live viewer or publishing another model does not change this view.
+
+```{card}
+type: custom
+title: Custom data, same viewer
+viewer: viewer
+inputs:
+  - input: evaluation
+    path: media/custom/1.bin
+    kind: demo/hist
+    format: npz
+    label: Recorded histogram
+settings:
+  color: accent
+  normalize: false
+```

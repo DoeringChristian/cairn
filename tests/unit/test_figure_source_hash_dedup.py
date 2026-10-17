@@ -26,7 +26,7 @@ import pytest
 from cairn.sdk.handlers.figure import FigureHandler
 from cairn.sdk.connect import open_writer
 from cairn.sdk.transport import Transport
-from cairn.server.storage.db import Database
+from cairn.backend.storage.db import Database
 
 
 def _log_figure(transport: Transport, handler: FigureHandler, fig) -> dict:

@@ -42,17 +42,20 @@ See [Media and rich types](../guides/media.md) for the logging side. When a seri
 
 ## Common card actions
 
-On the left of a card header: the chevron (collapse), the title (double-click or click the pencil to rename) and the card's own controls (log scale, badges, the interact hand on touch screens, **Comment** in reports). Right of the bar, every card has the same actions in the same order:
+Card headers use three action buttons: **Screenshot** (camera), **Settings**
+(gear) and **⋯** (more actions). The title and collapse control sit on the left.
 
-1. **Screenshot** (camera): the card's body as a PNG, exactly as displayed — its size, zoom, camera, step and scroll, at your screen's pixel density. Two things the browser does not let a page picture are left blank: the native controls of audio and video players, and pages from other sites embedded in logged HTML.
-2. **Download data**: the card's data. Line charts: a CSV of the plotted series; value, bar, scatter, parallel coordinates, importance, tables and the run comparer: a CSV of what they show; code diff: the diff as a `.patch`; media (images, video, audio, HTML, markdown, text, figures, tensors, histograms, 3D, volumes, artifacts, custom data): the logged file(s) at the shown step, zipped when several panes or gallery items show.
-3. **Add to report:** see [Reports](reports.md).
-4. **Reset view:** back to the card's default view (zoom and pan, camera); nothing happens when nothing changed.
-5. **Settings** (gear): opens the card full screen with its settings (see [Full-screen card](workspace.md#full-screen-card-and-settings)). On the run page and the project workspace that is the card editor.
-6. **Duplicate card** (two squares): a copy of the card — data, type and settings — right after itself.
-7. **×:** remove the card.
+- **Screenshot** saves the card body as a PNG at its current size, zoom, step and
+  scroll position. Native audio/video controls and cross-origin embedded pages
+  may be absent from the capture.
+- **Settings** opens the shared card editor: preview on the left, settings on the
+  right. See [Full-screen card](workspace.md#full-screen-card-and-settings).
+- **⋯** contains available secondary actions, such as Download data, Reset view,
+  Add to report, Duplicate card and Remove card. Reports also offer source actions
+  here. Only actions supported by that card and surface are shown.
 
-Read-only cards (a read-only token, share links) have Screenshot, Download data, Reset view and Settings only. On narrow screens the actions fold into the **⋯** menu, except **Add to report**.
+Published report cards use the same controls. Viewing changes do not alter an
+immutable publication; edit the report and publish a version to persist changes.
 
 Cards that plot several series show them as chips. In reports, click a chip's × to remove that series, or drag a chip onto another card to add the series there; on the run page and in the project workspace a card's series are its **Data**. There, a card that shows one metric for every run has no chip strip: its title names the metric.
 
@@ -69,8 +72,8 @@ A scalar's curve, one line per run.
 
 | Tab | Settings |
 |---|---|
-| Values | **Metrics** (the series drawn; reports and share links only: in a workspace the card editor's **Data** picks them). **X axis** *(default)*: **Step**, **Relative time (wall)** (seconds since the run was created), **Relative time (process)** (the seconds its process ran; cairn records no resume times yet, so this equals the wall-relative time), **Wall time**, or any metric; a metric whose values decrease somewhere is noted *Not monotonically increasing* (it still works, joined as of each step). **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
-| Grouping | **Group runs**: **Workspace** *(default)* follows the [workspace](project-workspace.md) sidebar's grouping (grouped: one line per innermost sidebar group, labelled `group: exp-44, jobType: train`; not grouped: one line per run), and in a [report](reports.md#cards-cells) follows the cell's run sets the same way (each set's own grouping; an ungrouped set draws one line per run); on the run page it uses the settings below. **Off** draws one line per run, even in a grouped workspace or run set. **By key** always uses the settings below, also in a grouped workspace. **Group runs by**: Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
+| Values | **Metrics** (the series drawn; reports only: in a workspace the card editor's **Data** picks them). **X axis** *(default)*: **Step**, **Relative time (wall)** (seconds since the run was created), **Relative time (process)** (the seconds its process ran; cairn records no resume times yet, so this equals the wall-relative time), **Wall time**, or any metric; a metric whose values decrease somewhere is noted *Not monotonically increasing* (it still works, joined as of each step). **X range** / **Y range**, **Log x** / **Log y** *(default)*. **Smoothing**: kind and amount *(default)*. **Outliers**: low/high percentile to clip the y range to *(default)*. **Max runs**: pinned runs come first *(default)*. |
+| Grouping | **Group runs**: **Workspace** *(default)* follows the [workspace](project-workspace.md) sidebar's grouping (grouped: one line per innermost sidebar group, labelled `group: exp-44, jobType: train`; not grouped: one line per run), and in a [report](reports.md) follows the cell's run sets the same way (each set's own grouping; an ungrouped set draws one line per run); on the run page it uses the settings below. **Off** draws one line per run, even in a grouped workspace or run set. **By key** always uses the settings below, also in a grouped workspace. **Group runs by**: Group, Job type or a Param. Runs that share the value draw as one centre **Line** (mean, median, min or max) with a **Band** (std, min–max or sem). **Hide member runs**, **Latest run per group** *(all default)*. Shown only when the card has several runs. |
 | Display | **Line type**: linear, monotone, step, step before, step after. **Chart type**: **Line**, **Area** (the lines stacked, each filled down to the one below) or **Percentage area** (each line's share of the total). **Show original**: the faded raw line under a smoothed one. **Full fidelity**: per-pixel min/max, recomputed on zoom. Axis titles. **Legend** (it lists only the lines that draw in the chart: a run or group that does not log the metric is left out) on/off, position (top, bottom, right, left), font size (small, medium, large, or auto: small below a 480 px chart, medium above) and [template](../reference/expressions.md#templates) (e.g. `${run.name} · ${run.group} · ${config.lr}`). **Tooltip** template and wall time *(most default)*. Each series also has its own **Colour**, **Width** and **Dash**, and a **Label**: a run template whose `[[ … ]]` sections show in the legend only while hovering, with `${x}` and `${y}` the hovered point (as wandb's `[[ ${x}: ${y} ]] name`). A series of one or two points is drawn as point markers. |
 | Expressions | **X expression**: any [expression](../reference/expressions.md) over the run, evaluated on each line's steps, e.g. `step * 32`, `epoch` or `relative_time / 60`. A metric is joined as of each step. **Add derived series**: an expression such as `loss / step`, drawn for every run. |
 
@@ -245,7 +248,7 @@ Every kind of data has one [default viewer](../guides/custom-viewers.md#default-
 
 A custom viewer card draws its data with one of the project's [custom viewers](../guides/custom-viewers.md#how-cards-pick-a-viewer), in a sandboxed frame per pane, with the step slider, galleries, the panel modes and the section slider of the other media cards. The gear's **Type** tab names each viewer that accepts the card's data by its title, after **Default (<name>)**.
 
-- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Type**); in reports and share links, Values › Series › **Viewer**. **Version** (Values › Series): `latest` or a published `vN`.
+- **Viewer**: **Default (<name>)** (the project's [default viewer](../guides/custom-viewers.md#default-viewers) of the data's kind) or a named one. In a workspace it is the card type (gear › **Type**); in reports, Values › Series › **Viewer**. **Version** (Values › Series): `latest` or a published `vN`.
 - **Reference tag** and **Pin reference step** (Values › Compare): a `compare` viewer gets the value and the reference together; any other viewer shows the reference as a second frame.
 - The viewer's own settings, in the tabs and sections its manifest names. They cascade from section and workspace defaults per viewer.
 - **Reset view** in the header clears a viewer's stored camera (viewers with a shared view).

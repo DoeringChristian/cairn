@@ -24,7 +24,7 @@ from typing import Any
 from .wrappers import _TypeWrapper
 
 #: A gallery point's artifact: the JSON manifest above. The server walks it
-#: for export and share scopes (``cairn.server.artifact_refs.GALLERY_MIME``,
+#: for export and share scopes (``cairn.backend.artifact_refs.GALLERY_MIME``,
 #: pinned to this one by a unit test).
 GALLERY_MIME = "application/vnd.cairn.gallery+json"
 

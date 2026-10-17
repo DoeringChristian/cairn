@@ -23,9 +23,9 @@ cairn.Reader("runs.zip")                  # a run archive exported from the UI
 
 | Target | How it reads |
 |---|---|
-| Local `.cairn/` directory | Reads over HTTP from the server serving the repo, and starts one in the background when none runs (see [Local repos](server.md#local-repos)). It sees what the server has applied: records a run has not uploaded yet are not there. |
-| Server | Reads over HTTP. Sends `CAIRN_TOKEN`, else the token `cairn login` saved for that server, if there is one. Downloaded artifact bytes are cached by hash (see `cache` and `cache_dir` below). |
-| `.zip` archive | Unpacks the archive into a temporary repo and reads it through a temporary server of its own; both go away on `close()`. Runs read this way cannot be edited. |
+| Local `.cairn/` directory | Opens SQLite and files directly, recovering unapplied local journal records. No server is started. |
+| Server | Reads over HTTP using the [resolved token](../reference/configuration.md#the-token). Downloaded artifact bytes are cached by hash (see `cache` and `cache_dir` below). |
+| `.zip` archive | Unpacks into a temporary local repo and reads it directly. The temporary repo is removed on `close()`; no server starts. Runs read this way cannot be edited. |
 
 Keyword arguments:
 
@@ -41,13 +41,13 @@ Keyword arguments:
 The CLI reads the same targets in the same order:
 
 ```bash
-cairn list --project mnist -c metrics.val.loss      # the runs, as filter()/sort() select them
-cairn list --repo runs.zip                          # a run archive
-cairn export --project mnist --format csv -o mnist.csv   # history(), as a file
+cairn runs --project mnist             # run IDs, names, statuses and projects as JSON
+cairn runs --repo runs.zip             # a run archive
+cairn show FULL_RUN_ID                 # recorded metadata and final metrics
 cairn artifact versions mnist/ckpt                  # artifact_versions()
 ```
 
-See [Client commands](server.md#client-commands).
+See [CLI reference](../reference/cli.md).
 
 ## Projects and runs
 
@@ -76,9 +76,8 @@ base = reader.runs("mnist").filter(name="base", status="completed").last()
 only = reader.runs("mnist").filter(name="base").get()   # exactly one, else LookupError
 ```
 
-A query is evaluated by one evaluator, the server's, so it returns the same
-runs in the same order on a local repo and on a server (a local repo is read
-through its own server too).
+Local and HTTP reads use the same backend query evaluator, so a query returns
+the same runs in the same order for either destination.
 
 ### Order
 
@@ -212,7 +211,7 @@ logged at step 100 (`KeyError` if there is none), and a slice selects a step
 range.
 
 For pandas DataFrames of scalar metrics, use `history()`. It needs the
-`[export]` extra (`pip install 'cairn-track[export]'`).
+`[export]` extra (`pip install 'cairn-track[export] @ git+https://github.com/DoeringChristian/cairn@v0.7.0'`).
 
 ```python
 run.history()                        # wide: one row per step, one column per metric
@@ -315,9 +314,8 @@ See [Artifacts and lineage](artifacts.md).
 
 ## Editing runs
 
-`run.edit()` opens an editor for an existing run. Writes go where a
-`cairn.Run` would write: the repo database, or the server that holds the repo,
-or the `cairn://` server the reader reads.
+`run.edit()` opens an editor for an existing run. A local reader writes
+directly to its repo database; a remote reader writes over HTTP to its server.
 
 ```python
 with reader.run(run_id).edit() as e:
@@ -332,10 +330,9 @@ with reader.run(run_id).edit() as e:
 ```
 
 The `Run` you called `edit()` on sees the changes; after `rename()`, its
-`version` is its number in the new series. Editing needs the `write`
-role on a server with authentication (see [Server, auth and
-deployment](server.md#tokens-and-roles)). Runs read from a `.zip` archive
-cannot be edited.
+`version` is its number in the new series. An authenticated server uses its
+single access token for edits, as for reads (see [Server and authentication](server.md)).
+Runs read from a `.zip` archive cannot be edited.
 
 ## Live query URLs
 
@@ -364,7 +361,7 @@ it points to can be cached forever.
 | `step` | `latest` (the highest step, default) or an integer |
 | `live` | `True` (default): return the re-resolving query URL. `False`: resolve it once now and return the fixed `/api/artifacts/<digest>` URL. |
 | `server` | The server (`cairn://host:port` or `http(s)://…`). Default: the configured target, which must be a server. |
-| `token` | The token for the one-time resolve when `live=False`. Default: `CAIRN_TOKEN`, else the server's `cairn login` token. |
+| `token` | The token for the initial resolve when `live=False`. Defaults to the [resolved server token](../reference/configuration.md#the-token). |
 | `**filters` | Predicates: `lr__gt=1e-4`, `tags__contains="best"`, `status="completed"` |
 
 In a query URL, nested fields use a dot: `metrics.loss__lt=0.1`,

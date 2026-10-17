@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import cairn
-from cairn.server import ingest_ops
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend import ingest_ops
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 
 
 def _run(repo, name):

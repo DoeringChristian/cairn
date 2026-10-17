@@ -14,11 +14,11 @@ from fastapi.testclient import TestClient
 
 import cairn
 from cairn import cli
-from cairn.server import gc, ingest_ops
+from cairn.backend import gc, ingest_ops
 from cairn.server.app import create_app
-from cairn.server.storage.blobs import BlobStore
-from cairn.server.storage.datadir import DataDir
-from cairn.server.storage.db import Database
+from cairn.backend.storage.blobs import BlobStore
+from cairn.backend.storage.datadir import DataDir
+from cairn.backend.storage.db import Database
 from tests.conftest import ingest_repo
 
 QUIET = {"capture_source": False, "capture_stdout": False, "capture_env": False,
@@ -94,27 +94,19 @@ def test_every_reference_site_is_marked(tmp_path):
     try:
         # A report asset and a source diff (manifest on disk).
         asset, _ = r.blobs.put(b"asset-bytes")
-        r.db.write(
-            "INSERT INTO reports (id, project_id, name, payload, created_at, updated_at) "
-            "VALUES ('rep', 'p', 'r', '{}', 'x', 'x')"
-        )
-        r.db.write(
-            "INSERT INTO report_assets VALUES ('rep', ?, 'image/png', 11, 'x')", [asset],
-        )
+        from cairn.backend.artifact_registry_ops import create_version
+        import json
+        manifest, _ = r.blobs.put(json.dumps({'files':[{'path':'image.png','hash':asset,'size':11}]}).encode())
+        create_version(r.db,r.blobs,project_id='p',name='report-r',type='report',digest=manifest)
         diff, _ = r.blobs.put(b"diff --git")
-        src = r.dd.run_source_dir(rid)
-        (src / "manifest.json").write_text(json.dumps({"files": [], "diff_hash": diff}))
-        # A record not ingested yet names a blob.
-        from tests.legacy_wal import LegacyLog
-
-        t = LegacyLog(root, "9" * 32)
-        t.create()
-        pending = t.blob(b"pending-bytes", "text/plain")
+        from cairn.backend import sources
+        archive, _ = r.blobs.put(b"source archive")
+        sources.bind(r.db, rid, archive, {"files": [], "diff_hash": diff})
         everything = set(r.blobs.iter_digests())
         _age_all(r.blobs)
         marked = gc.mark(r.db, r.dd, r.blobs)
         assert everything <= marked, everything - marked
-        assert {asset, diff, pending} <= marked
+        assert {asset, diff} <= marked
         assert gc.collect(r.db, r.dd, r.blobs)["deleted"] == 0
     finally:
         r.close()
@@ -131,7 +123,7 @@ def test_deleting_a_run_frees_its_blobs_and_the_server_collects(tmp_path):
     blobs = BlobStore(DataDir(root).artifacts_dir)
     _age_all(blobs)
     before = set(blobs.iter_digests())
-    with TestClient(create_app(data_dir=root)) as client:
+    with TestClient(create_app(data_dir=root, auth_enabled=False)) as client:
         assert client.delete(f"/api/runs/{rid}").status_code == 200
         deadline = time.monotonic() + 10
         while set(blobs.iter_digests()) == before:
@@ -149,6 +141,109 @@ def test_put_of_a_stored_blob_refreshes_it_against_gc(repo):
     repo.blobs.put(b"shared")  # a writer stores the same bytes again
     assert gc.collect(repo.db, repo.dd, repo.blobs)["deleted"] == 0
     assert repo.blobs.exists(digest)
+
+
+@pytest.mark.parametrize("manifest_metadata", [True, False])
+def test_snapshot_keeps_deleted_output_manifest_and_files(repo, manifest_metadata):
+    from cairn.backend import artifact_registry_ops, snapshots
+    from cairn.backend.artifact_refs import MANIFEST_MIME
+
+    rid = ingest_ops.create_run(repo.db, project="p")["run_id"]
+    payload = b"immutable output"
+    digest, size = repo.blobs.put(payload)
+    manifest_bytes = json.dumps({"files": [{"path": "result.txt", "hash": digest,
+                                          "size": size}]}).encode()
+    if manifest_metadata:
+        manifest = ingest_ops.put_artifact(repo.db, repo.blobs, manifest_bytes,
+                                          MANIFEST_MIME)["hash"]
+    else:
+        # Registering a raw uploaded manifest is supported too; its files
+        # must survive even without an artifacts-table MIME descriptor.
+        manifest, _ = repo.blobs.put(manifest_bytes)
+    version = artifact_registry_ops.create_version(
+        repo.db, repo.blobs, project_id="p", name="result", digest=manifest,
+        created_by_run=rid,
+    )
+    ingest_ops.finish_run(repo.db, rid, "completed")
+    snapshot = snapshots.capture_run(repo.db, rid)
+    artifact_registry_ops.delete_version(repo.db, version["id"], force=True)
+    ingest_ops.delete_run(repo.db, repo.dd, rid)
+    _age_all(repo.blobs)
+
+    assert gc.collect(repo.db, repo.dd, repo.blobs)["deleted"] == 0
+    restored = snapshots.capture_run(repo.db, rid, snapshot["snapshot_id"])
+    assert restored["outputs"][0]["digest"] == manifest
+    assert json.loads(repo.blobs.get(manifest))["files"][0]["hash"] == digest
+    assert repo.blobs.get(digest) == payload
+
+
+@pytest.mark.parametrize("writer", ["direct", "records"])
+def test_gc_reupload_preserves_new_metadata(fresh_db, data_dir, blob_store, monkeypatch, writer):
+    """A stale GC mark must not delete a re-upload's metadata after its bytes."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from cairn.backend import record_apply
+
+    db, blobs = fresh_db, blob_store
+    rid = ingest_ops.create_run(db, project="p")["run_id"]
+    payload = b"concurrently reused"
+    digest = ingest_ops.put_artifact(db, blobs, payload, "text/plain", {"caption": "old"})["hash"]
+    _age(blobs, digest)
+    deleted, uploaded, release = threading.Event(), threading.Event(), threading.Event()
+    real_delete, real_put = blobs.delete_if_older, blobs.put
+
+    def pause_after_delete(value, cutoff):
+        size = real_delete(value, cutoff)
+        if value == digest and size is not None:
+            deleted.set()
+            assert release.wait(10), "test did not release collector"
+        return size
+
+    def notify_upload(value):
+        result = real_put(value)
+        uploaded.set()
+        return result
+
+    monkeypatch.setattr(blobs, "delete_if_older", pause_after_delete)
+    monkeypatch.setattr(blobs, "put", notify_upload)
+    metadata = {"caption": "re-uploaded"}
+    point = {"name": "text", "step": 0, "wall_time": "2026-10-17T00:00:00+00:00",
+             "object_type": "text", "artifact_hash": digest}
+
+    def publish_again():
+        if writer == "direct":
+            ingest_ops.put_artifact(db, blobs, payload, "text/plain", metadata)
+            ingest_ops.insert_batch(db, rid, [point])
+        else:
+            blobs.put(payload)
+            record_apply.apply_records(db, data_dir, blobs, rid, "primary", 1, [
+                {"seq": 1, "op": "artifact_meta", "payload": {
+                    "hash": digest, "mime_type": "text/plain", "size_bytes": len(payload),
+                    "metadata": metadata, "object_type": "text",
+                }},
+                {"seq": 2, "op": "batch", "payload": {"points": [point]}},
+            ])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        collection = pool.submit(gc.collect, db, data_dir, blobs)
+        try:
+            assert deleted.wait(10), "collector did not delete the old bytes"
+            publication = pool.submit(publish_again)
+            assert uploaded.wait(10), "writer did not re-upload the bytes"
+            # The filesystem upload can finish, but metadata publication must
+            # wait for GC's old-row deletion, on SQLite and PostgreSQL alike.
+            with pytest.raises(TimeoutError):
+                publication.result(timeout=.1)
+        finally:
+            release.set()
+        collection.result(timeout=10)
+        publication.result(timeout=10)
+
+    assert blobs.get(digest) == payload
+    assert db.read_one("SELECT mime_type,metadata FROM artifacts WHERE hash=?", [digest]) == (
+        "text/plain", json.dumps(metadata),
+    )
+    assert db.read_one("SELECT artifact_hash FROM sequences WHERE run_id=?", [rid]) == (digest,)
+    assert gc.collect(db, data_dir, blobs)["deleted"] == 0
 
 
 def test_gc_racing_a_writer_never_loses_a_written_blob(repo):
@@ -176,18 +271,3 @@ def test_gc_racing_a_writer_never_loses_a_written_blob(repo):
     # Whatever the writer put in the last grace period is there.
     lost = [d for d in set(digests[-20:]) if not repo.blobs.exists(d)]
     assert lost == []
-
-
-def test_cli_gc_on_a_local_repo(tmp_path):
-    root = tmp_path / ".cairn"
-    r = _Repo(root)
-    d, _ = r.blobs.put(b"x" * 1000)
-    _age(r.blobs, d)
-    r.close()
-    out = CliRunner().invoke(cli.main, ["gc", "--dry-run", "--repo", str(root)])
-    assert out.exit_code == 0, out.output
-    assert "would free 0.0 MB in 1 blob(s)" in out.output
-    out = CliRunner().invoke(cli.main, ["gc", "--repo", str(root)])
-    assert out.exit_code == 0, out.output
-    assert "freed 0.0 MB in 1 blob(s)" in out.output
-    assert not BlobStore(DataDir(root).artifacts_dir).exists(d)

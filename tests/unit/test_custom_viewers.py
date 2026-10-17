@@ -13,16 +13,9 @@ from fastapi.testclient import TestClient
 import cairn
 from cairn.server import auth as auth_core
 from cairn.server.app import create_app
-from cairn.server.custom_viewers import DevStore
-from cairn.server.viewer_manifest import (
-    MAX_FOLDER_BYTES,
-    ManifestError,
-    accepts_matches,
-    load_folder,
-    mime_for,
-    validate_manifest,
-)
-from cairn.server.run_sets import run_sets_yaml
+from cairn.backend.custom_viewers import DevStore
+from cairn.backend.viewer_manifest import MAX_FOLDER_BYTES, ManifestError, accepts_matches, load_folder, mime_for, validate_manifest
+from cairn.backend.run_sets import run_sets_yaml
 
 QUIET = dict(capture_source=False, capture_stdout=False, capture_env=False, capture_system_metrics=False)
 SCHEMA = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "cairn-viewer.schema.json"
@@ -149,7 +142,7 @@ def test_setting_placement_help_and_icon():
 
 def test_placement_vocabulary_matches_the_ui_palette():
     """The tabs/sections are the settings palette's (vendor/cairn-ui/src/components/settings/palette/logic.ts)."""
-    from cairn.server.viewer_manifest import SETTING_SECTIONS, SETTING_TABS
+    from cairn.backend.viewer_manifest import SETTING_SECTIONS, SETTING_TABS
 
     schema = json.loads(SCHEMA.read_text())
     assert schema["$defs"]["tab"]["enum"] == list(SETTING_TABS)
@@ -181,7 +174,7 @@ def test_json_schema_agrees():
 
 
 def test_schema_vocabulary_matches_the_validator():
-    from cairn.server.viewer_manifest import SETTING_TYPES
+    from cairn.backend.viewer_manifest import SETTING_TYPES
 
     schema = json.loads(SCHEMA.read_text())
     assert schema["$defs"]["setting"]["properties"]["type"]["enum"] == list(SETTING_TYPES)
@@ -268,7 +261,7 @@ def test_viewers_list_and_files(tmp_path):
     (root / "index.js").write_text("export const two = 2;\n")
     v2 = cairn.publish_viewer(root, project="p", repo=repo)
     cairn.log_artifact(b"x", "not-a-viewer", project="p", repo=repo)
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         (entry,) = own(client.get("/api/projects/p/viewers").json()["viewers"])
         assert entry["version_id"] == v2.id and entry["version"] == 2 and entry["dev"] is False
         assert entry["accepts"] == GOOD["accepts"] and entry["inputs"] == "compare"
@@ -294,7 +287,7 @@ def test_blob_headers_and_media_still_served(tmp_path):
     repo = tmp_path / ".cairn"
     with cairn.Run(project="p", repo=repo, **QUIET) as run:
         run.track(cairn.Image(np.zeros((4, 4, 3), np.uint8)), "img", 0)
-    with TestClient(create_app(data_dir=repo, background_tasks=False)) as client:
+    with TestClient(create_app(data_dir=repo, background_tasks=False, auth_enabled=False)) as client:
         (seq,) = client.get(f"/api/runs/{run.id}/sequences/img").json()["points"]
         r = client.get(f"/api/artifacts/{seq['artifact_hash']}")
         assert r.status_code == 200 and r.headers["content-type"] == "image/png"
@@ -370,8 +363,8 @@ def test_dev_routes_and_cli_sync(tmp_path):
 
     app = create_app(data_dir=tmp_path / "cairn", auth_enabled=True, background_tasks=False)
     with TestClient(app) as client:
-        _id, writer = auth_core.create_token(app.state.db, name="w", role="write")
-        _id, reader = auth_core.create_token(app.state.db, name="r", role="read")
+        writer = app.state.token
+        reader = "invalid-token"
         client.headers.update({"Authorization": f"Bearer {writer}"})
         root = _dev_folder(tmp_path)
         sync = DevSync(client, "p", root)
@@ -381,7 +374,7 @@ def test_dev_routes_and_cli_sync(tmp_path):
         assert sync.sync() == 2
 
         ro = TestClient(app)
-        ro.headers.update({"Authorization": f"Bearer {reader}"})
+        ro.headers.update({"Authorization": f"Bearer {writer}"})
         (entry,) = own(ro.get("/api/projects/p/viewers").json()["viewers"])
         assert entry["dev"] is True and entry["name"] == "devv" and entry["revision"] == 2
         files = ro.get("/api/projects/p/viewers/dev/devv/files").json()
@@ -394,8 +387,8 @@ def test_dev_routes_and_cli_sync(tmp_path):
         assert r.headers["x-content-type-options"] == "nosniff"
         assert ro.get("/api/projects/p/viewers/dev/devv/file", params={"path": "nope.js"}).status_code == 404
         # A read token cannot write a dev source.
-        r = ro.post("/api/projects/p/viewers/dev/devv", json={"session": "s" * 16, "files": {}})
-        assert r.status_code == 403
+        r = ro.post("/api/projects/p/viewers/dev/devv", json={"session": "s" * 16, "files": {}}, headers={"Authorization": "Bearer invalid"})
+        assert r.status_code == 401
         # Stop removes it.
         sync.close()
         assert own(ro.get("/api/projects/p/viewers").json()["viewers"]) == []
@@ -403,7 +396,7 @@ def test_dev_routes_and_cli_sync(tmp_path):
 
 
 def test_dev_store_is_shared_by_apps_on_one_repo(tmp_path):
-    from cairn.server.custom_viewers import dev_store_for
+    from cairn.backend.custom_viewers import dev_store_for
 
     assert dev_store_for(tmp_path) is dev_store_for(tmp_path / "." )
     assert dev_store_for(tmp_path) is not dev_store_for(tmp_path / "other")
@@ -412,51 +405,6 @@ def test_dev_store_is_shared_by_apps_on_one_repo(tmp_path):
 # ---------------------------------------------------------------------------
 # Share scope
 # ---------------------------------------------------------------------------
-
-def test_share_scope_includes_report_viewers_only(tmp_path):
-    repo = tmp_path / ".cairn"
-    used = make_viewer(tmp_path / "used", {"name": "used", "accepts": ["custom:k"]})
-    pinned = make_viewer(tmp_path / "pinned", {"name": "pinned", "accepts": ["custom:k"]})
-    unused = make_viewer(tmp_path / "unused", {"name": "unused", "accepts": ["custom:k"]})
-    used_v1 = cairn.publish_viewer(used, project="p", repo=repo)
-    (used / "index.js").write_text("export const v2 = 1;\n")
-    used_v2 = cairn.publish_viewer(used, project="p", repo=repo)
-    pinned_v1 = cairn.publish_viewer(pinned, project="p", repo=repo)
-    (pinned / "index.js").write_text("export const v2 = 1;\n")
-    pinned_v2 = cairn.publish_viewer(pinned, project="p", repo=repo)
-    unused_v1 = cairn.publish_viewer(unused, project="p", repo=repo)
-    with cairn.Run(project="p", repo=repo, **QUIET) as run:
-        run.track(cairn.Data([1], kind="k"), "d", 0)
-
-    app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
-    with TestClient(app) as owner:
-        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
-        owner.headers.update({"Authorization": f"Bearer {token}"})
-        source = (
-            f"```cairn\n{run_sets_yaml([run.id])}\ncards:\n"
-            "  - {metric: d, type: custom, settings: {viewer: used}}\n"
-            "  - {metric: d, type: custom, settings: {viewer: pinned, viewer_version: 1}}\n```"
-        )
-        rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
-        secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
-        viewer = TestClient(app)
-        assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
-
-        listed = own(viewer.get("/api/projects/p/viewers").json()["viewers"])
-        assert {v["version_id"] for v in listed} == {used_v2.id, pinned_v1.id}
-        assert all(not v["dev"] for v in listed)
-        for vid in (used_v2.id, pinned_v1.id):
-            assert viewer.get(f"/api/artifact-versions/{vid}/files").status_code == 200
-            assert viewer.get(f"/api/artifact-versions/{vid}/file", params={"path": "index.js"}).status_code == 200
-        for vid in (used_v1.id, pinned_v2.id, unused_v1.id):
-            assert viewer.get(f"/api/artifact-versions/{vid}/files").status_code == 403
-            assert viewer.get(f"/api/artifact-versions/{vid}/file", params={"path": "index.js"}).status_code == 403
-        assert viewer.get("/api/projects/other/viewers").status_code == 403
-        assert viewer.get("/api/projects/p/viewers/dev/used/files").status_code == 403
-        # The share roster carries the custom kind.
-        ctx = viewer.get("/api/share/context").json()
-        (seq,) = ctx["metric_index"][run.id]
-        assert seq["object_type"] == "custom" and seq["kind"] == "k"
 
 
 # ---------------------------------------------------------------------------
@@ -619,39 +567,3 @@ def test_cli_init_three_and_defaults(tmp_path):
     assert r.exit_code == 0 and "p/my-points:v1" in r.output, r.output
     r = CliRunner().invoke(main, ["viewer", "init", str(tmp_path / "x"), "--kind", "Bad Kind"])
     assert r.exit_code != 0 and "invalid data kind" in r.output
-
-
-def test_share_scope_includes_viewers_a_card_may_pick(tmp_path):
-    """A custom card without `viewer` puts the viewers it may pick (its kind's
-    default, or one accepting custom data) in scope; a volume card's default
-    is the built-in viewer, which needs no scope, until the project names its
-    own (cairn.server.viewer_defaults)."""
-    repo = tmp_path / ".cairn"
-    kinds = make_viewer(tmp_path / "kinds", {"name": "kinds", "accepts": ["custom:k/*"]})
-    vol = make_viewer(tmp_path / "vol", {"name": "vol", "accepts": ["volume"]})
-    img = make_viewer(tmp_path / "img", {"name": "img", "accepts": ["image"]})
-    kinds_v1 = cairn.publish_viewer(kinds, project="p", repo=repo)
-    vol_v1 = cairn.publish_viewer(vol, project="p", repo=repo)
-    img_v1 = cairn.publish_viewer(img, project="p", repo=repo)
-    with cairn.Run(project="p", repo=repo, **QUIET) as run:
-        run.track(cairn.Data([1], kind="k/a"), "d", 0)
-
-    app = create_app(data_dir=repo, auth_enabled=True, background_tasks=False)
-    with TestClient(app) as owner:
-        _id, token = auth_core.create_token(app.state.db, name="w", role="write")
-        owner.headers.update({"Authorization": f"Bearer {token}"})
-
-        def listed(cards: str) -> set[str]:
-            source = f"```cairn\n{run_sets_yaml([run.id])}\ncards:\n{cards}```"
-            rid = owner.post("/api/projects/p/reports", json={"name": "r", "payload": {"source": source}}).json()["id"]
-            secret = owner.post(f"/api/projects/p/reports/{rid}/shares", json={}).json()["secret"]
-            viewer = TestClient(app)
-            assert viewer.post("/api/share/redeem", json={"secret": secret}).status_code == 200
-            return {v["version_id"] for v in own(viewer.get("/api/projects/p/viewers").json()["viewers"])}
-
-        assert listed("  - {metric: d, type: custom}\n") == {kinds_v1.id}
-        assert listed("  - {metric: blob, type: volume}\n") == set()
-        assert listed("  - {metric: d, type: scalar}\n") == set()
-        assert img_v1.id not in listed("  - {metric: d, type: custom}\n  - {metric: blob, type: volume}\n")
-        owner.put("/api/projects/p/viewer-defaults", json={"kind": "volume", "viewer": "vol"})
-        assert listed("  - {metric: blob, type: volume}\n") == {vol_v1.id}

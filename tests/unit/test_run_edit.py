@@ -67,14 +67,15 @@ def test_edit_over_http(live_server):
     _edit_and_check(repo, _seed(repo))
 
 
-def test_edit_local_repo_goes_to_its_server(tmp_path):
+def test_edit_local_repo_uses_direct_storage(tmp_path):
     from cairn.server.registration import read_info
 
     repo = tmp_path / ".cairn"
     run_id = _seed(repo)
     with cairn.Reader(repo) as reader:
         with reader.run(run_id).edit() as e:
-            assert e._transport.server_url == read_info(repo.resolve())["url"]
+            assert read_info(repo.resolve()) is None
+            assert e._transport.server_url.startswith("file://")
             e.rename("via-server")
     with cairn.Reader(repo) as reader:
         assert reader.run(run_id).name == "via-server"
@@ -85,8 +86,18 @@ def test_edit_zip_reader_raises(tmp_path):
     run_id = _seed(repo)
     zip_path = tmp_path / "run.zip"
     with cairn.Reader(repo) as reader:
-        resp = reader._backend._client.post("/api/export", json={"run_ids": [run_id]})
-        zip_path.write_bytes(resp.content)
+        from cairn.backend.run_archive import write_archive
+        import zipfile
+        from cairn.backend.storage.datadir import DataDir
+        from cairn.backend.storage.blobs import BlobStore
+        from cairn.backend.storage.db import Database
+        dd = DataDir(repo)
+        db = Database.open(dd.db_path)
+        try:
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                write_archive(db, BlobStore(dd.artifacts_dir), dd, [run_id], archive)
+        finally:
+            db.close()
     with cairn.Reader(zip_path) as reader:
         with pytest.raises(ValueError, match="exported archive"):
             reader.run(run_id).edit()

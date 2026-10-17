@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from cairn.server import artifact_registry_ops as ops
-from cairn.server import ingest_ops
+from cairn.backend import artifact_registry_ops as ops
+from cairn.backend import ingest_ops
 
 
 def _version(db, blobs, name, run=None, payload=b"w"):

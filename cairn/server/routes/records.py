@@ -38,7 +38,7 @@ import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from .. import record_apply
+from cairn.backend import record_apply
 from ._common import get_blobs, get_data_dir, get_db
 
 log = logging.getLogger(__name__)
@@ -143,6 +143,8 @@ async def post_records(run_id: str, log_name: str, request: Request) -> Any:
                 lambda: record_apply.apply_records(db, dd, blobs, run_id, log_name, from_seq, records),
                 limiter=_limiter(request),
             )
+        except record_apply.ReplayConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except record_apply.BadRecords as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         except record_apply.MissingBlobs as exc:
@@ -181,7 +183,7 @@ async def put_blob(digest: str, request: Request) -> Response:
     if not _SHA256.match(digest):
         raise HTTPException(status_code=422, detail="not a sha256 hex digest")
     blobs = get_blobs(request)
-    if blobs.touch(digest):
+    if await anyio.to_thread.run_sync(blobs.touch, digest):
         # Already stored: the body is not needed (a client may still send it).
         return Response(status_code=200)
     h = hashlib.sha256()
