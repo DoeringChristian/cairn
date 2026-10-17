@@ -1,5 +1,5 @@
 site_name: cairn
-site_description: An open-source ML experiment tracker with a local-first, client/server architecture.
+site_description: Experiment tracking and executable research reports, with direct local storage or a remote server.
 repo_url: https://github.com/DoeringChristian/cairn
 edit_uri: edit/main/docs/
 docs_dir: docs
@@ -53,7 +53,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: ["."]
+          paths: [".", "vendor/cairn-ui"]
           options:
             docstring_style: google
             show_source: false
