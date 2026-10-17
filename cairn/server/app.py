@@ -80,14 +80,18 @@ class _JsonGZipResponder(GZipResponder):
     video, archives) are already compressed, and a byte range must stay a
     byte range of the stored file."""
 
+    _passthrough = False
+
     async def send_with_compression(self, message) -> None:
         if message["type"] == "http.response.start":
             ctype = Headers(raw=message["headers"]).get("content-type", "")
+            self._passthrough = not ctype.startswith("application/json") or message["status"] == 206
+        # Decide before Starlette sees the start message: its gzip responder
+        # may send excluded headers immediately instead of buffering them.
+        if self._passthrough:
+            await self.send(message)
+        else:
             await super().send_with_compression(message)
-            if not ctype.startswith("application/json"):
-                self.content_type_is_excluded = True
-            return
-        await super().send_with_compression(message)
 
 
 class _JsonGZip:
