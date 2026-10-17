@@ -53,8 +53,18 @@ pip install 'cairn-track[reports,ui] @ git+https://github.com/DoeringChristian/c
 From a source checkout:
 
 ```bash
-uv pip install -e '.[reports,ui]'
+git submodule update --init --recursive
+uv sync --extra reports --extra ui
+uv run --extra reports cairn server --host 127.0.0.1
 ```
+
+For a fresh clone, use `git clone --recurse-submodules
+https://github.com/DoeringChristian/cairn.git`. The `vendor/cairn-ui` submodule
+contains the matching browser bundle and Python UI package; initialize it before
+running `uv` in a checkout. If `uv` says that `vendor/cairn-ui` has no
+`pyproject.toml`, run the submodule command above, including after switching to a
+release that changes the submodule revision. Release wheels already contain the
+browser and need no submodule checkout.
 
 `reports` installs the Markdown, mathematics, Matplotlib, and Plotly rendering tools.
 `ui` adds the Python notebook-card package. Release wheels also include the matching
